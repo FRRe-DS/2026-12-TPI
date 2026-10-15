@@ -4,7 +4,7 @@
 Repositorio correspondiente al **Módulo M6 (Viajes y Ciclo de Vida)** de la plataforma distribuida de movilidad urbana bajo demanda.
 
 ## Integrantes - Grupo 12
-* Ayala Trangoni Malena Esperanza - Legajo: 
+* Ayala Trangoni Malena Esperanza - Legajo: 27754
 * Di Rado Luciano - Legajo: 26957
 * Frankhauser Agostina - Legajo: 27311
 * Kowtun Andrea - Legajo: 27049
