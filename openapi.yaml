@@ -1,0 +1,518 @@
+openapi: 3.0.3
+info:
+  title: Módulo M6 - Viajes y Ciclo de Vida API
+  description: |
+    API REST para la gestión de la máquina de estados del viaje, validación de inicio, 
+    cierre, cancelaciones y auditoría de transiciones (Grupo 12 - Desarrollo de Software 2026).
+  version: 1.0.0
+
+servers:
+  - url: http://localhost:3006/api/v1
+    description: Servidor de desarrollo local (Contenedor OCI)
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: Trips
+    description: Operaciones del ciclo de vida y consultas de viajes
+  - name: Health
+    description: Diagnóstico y salud del servicio (RNF-14)
+
+paths:
+  /health:
+    get:
+      tags: [Health]
+      summary: Health check del servicio (RNF-14)
+      security: []
+      responses:
+        '200':
+          description: El servicio y la base de datos responden correctamente
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: UP
+                  timestamp:
+                    type: string
+                    format: date-time
+
+  /trips:
+    post:
+      tags: [Trips]
+      summary: Crear un nuevo viaje tras asignación en despacho (Desde M5)
+      description: |
+        Inicia el ciclo de vida del viaje en estado `PENDING_ARRIVAL`. 
+        Es idempotente respecto a `requestId` (RNF-08 / RNF-09).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateTripRequest'
+      responses:
+        '201':
+          description: Viaje creado exitosamente en estado PENDING_ARRIVAL
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Trip'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          description: Ya existe un viaje creado para el `requestId` proporcionado (Idempotencia / Concurrencia)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+    get:
+      tags: [Trips]
+      summary: Listar viajes filtrados (Para historial de M2 o consultas de Operador)
+      description: Permite a M2 obtener el historial resumido de un cliente (RF-2.4) o filtrar por conductor/estado.
+      parameters:
+        - in: query
+          name: clientId
+          schema:
+            type: string
+          description: Filtrar por ID del cliente
+        - in: query
+          name: driverId
+          schema:
+            type: string
+          description: Filtrar por ID del conductor
+        - in: query
+          name: state
+          schema:
+            $ref: '#/components/schemas/TripState'
+          description: Filtrar por estado actual del viaje
+      responses:
+        '200':
+          description: Lista de viajes resumida
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Trip'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /trips/{id}:
+    get:
+      tags: [Trips]
+      summary: Consultar estado actual y resumen de un viaje (RF-6.2)
+      description: Accesible por el cliente del viaje, el conductor asignado o un operador autorizado.
+      parameters:
+        - $ref: '#/components/parameters/TripIdParam'
+      responses:
+        '200':
+          description: Detalle y estado actual del viaje
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Trip'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /trips/{id}/arrived:
+    post:
+      tags: [Trips]
+      summary: Indicar arribo del conductor al punto de retiro (RF-6.3)
+      description: |
+        Transición: `PENDING_ARRIVAL` -> `DRIVER_ARRIVED`.
+        Rol requerido: `DRIVER` (debe coincidir con el `driverId` asignado).
+        Emite evento asíncrono `DriverArrived` hacia M8.
+      parameters:
+        - $ref: '#/components/parameters/TripIdParam'
+      responses:
+        '200':
+          description: Arribo registrado correctamente
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Trip'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Transición inválida (el viaje no está en estado PENDING_ARRIVAL)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /trips/{id}/start:
+    post:
+      tags: [Trips]
+      summary: Iniciar viaje validando código QR / token de un solo uso (RF-6.4)
+      description: |
+        Transición: `DRIVER_ARRIVED` -> `IN_PROGRESS`.
+        Rol requerido: `DRIVER`.
+        Valida el token contra M8 antes de aplicar la transición. Emite evento `TripStarted` hacia M8.
+      parameters:
+        - $ref: '#/components/parameters/TripIdParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StartTripRequest'
+      responses:
+        '200':
+          description: QR validado e inicio de viaje registrado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Trip'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Transición inválida (el viaje no está en estado DRIVER_ARRIVED)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: El código QR / token de verificación es inválido, ya fue usado o expiró
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: Servicio de validación (M8) no disponible o timeout excedido (RNF-13)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /trips/{id}/complete:
+    post:
+      tags: [Trips]
+      summary: Finalizar el viaje registrando métricas de tiempo y distancia (RF-6.5)
+      description: |
+        Transición: `IN_PROGRESS` -> `COMPLETED`.
+        Rol requerido: `DRIVER`. Protegido contra doble finalización concurrente (RNF-08).
+        Emite evento `TripCompleted` hacia M7, M8 y M3/M4.
+      parameters:
+        - $ref: '#/components/parameters/TripIdParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CompleteTripRequest'
+      responses:
+        '200':
+          description: Viaje finalizado exitosamente
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Trip'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Transición inválida o intento de doble finalización (el viaje no está en IN_PROGRESS)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /trips/{id}/cancel:
+    post:
+      tags: [Trips]
+      summary: Cancelar un viaje por parte del cliente o conductor (RF-6.6 y RF-6.7)
+      description: |
+        Transición desde `PENDING_ARRIVAL` o `DRIVER_ARRIVED` hacia:
+        - `CANCELLED_BY_CLIENT` si el rol en el JWT es `CLIENT` (emite `TripCancelledByClient` a M7 y M8).
+        - `CANCELLED_BY_DRIVER` si el rol en el JWT es `DRIVER` (emite `TripCancelledByDriver` a M5 y M8).
+        No se permite cancelar un viaje en estado `IN_PROGRESS` o `COMPLETED`.
+      parameters:
+        - $ref: '#/components/parameters/TripIdParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CancelTripRequest'
+      responses:
+        '200':
+          description: Viaje cancelado exitosamente
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Trip'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: El viaje ya no puede ser cancelado en su estado actual (ej. IN_PROGRESS o ya finalizado)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /trips/{id}/history:
+    get:
+      tags: [Trips]
+      summary: Consultar el historial inmutable de transiciones del viaje (RF-6.8)
+      description: Devuelve la trazabilidad completa de auditoría (estados, actores, fechas y motivos).
+      parameters:
+        - $ref: '#/components/parameters/TripIdParam'
+      responses:
+        '200':
+          description: Lista cronológica de eventos del viaje
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/TripEventHistory'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Token JWT emitido por M1 (Identidad y Acceso) con claims `sub` (userId) y `role` (CLIENT, DRIVER, OPERATOR).
+
+  parameters:
+    TripIdParam:
+      name: id
+      in: path
+      required: true
+      description: Identificador único del viaje (UUID)
+      schema:
+        type: string
+        format: uuid
+
+  schemas:
+    TripState:
+      type: string
+      enum:
+        - PENDING_ARRIVAL
+        - DRIVER_ARRIVED
+        - IN_PROGRESS
+        - COMPLETED
+        - CANCELLED_BY_CLIENT
+        - CANCELLED_BY_DRIVER
+
+    VehicleType:
+      type: string
+      enum:
+        - AUTO
+        - MOTO
+
+    CreateTripRequest:
+      type: object
+      required:
+        - requestId
+        - clientId
+        - driverId
+        - vehicleType
+        - origin
+        - destination
+      properties:
+        requestId:
+          type: string
+          format: uuid
+          example: "a1b2c3d4-e5f6-7890-1234-567890abcdef"
+        clientId:
+          type: string
+          example: "usr_client_101"
+        driverId:
+          type: string
+          example: "usr_driver_202"
+        vehicleType:
+          $ref: '#/components/schemas/VehicleType'
+        origin:
+          type: string
+          example: "Av. 3 de Abril 1200, Corrientes"
+        destination:
+          type: string
+          example: "French 414, Resistencia"
+
+    StartTripRequest:
+      type: object
+      required:
+        - verificationToken
+      properties:
+        verificationToken:
+          type: string
+          description: Código QR o token efímero de un solo uso generado por M8
+          example: "qr_tok_98f7d6a5s4d3"
+
+    CompleteTripRequest:
+      type: object
+      required:
+        - distanceKm
+        - durationMinutes
+      properties:
+        distanceKm:
+          type: number
+          format: float
+          minimum: 0.1
+          example: 6.4
+        durationMinutes:
+          type: integer
+          minimum: 1
+          example: 18
+
+    CancelTripRequest:
+      type: object
+      required:
+        - reason
+      properties:
+        reason:
+          type: string
+          minLength: 3
+          maxLength: 255
+          example: "Demora excesiva del conductor / Imprevisto personal"
+
+    Trip:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        requestId:
+          type: string
+          format: uuid
+        clientId:
+          type: string
+        driverId:
+          type: string
+        vehicleType:
+          $ref: '#/components/schemas/VehicleType'
+        origin:
+          type: string
+        destination:
+          type: string
+        state:
+          $ref: '#/components/schemas/TripState'
+        distanceKm:
+          type: number
+          format: float
+          nullable: true
+        durationMinutes:
+          type: integer
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    TripEventHistory:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        tripId:
+          type: string
+          format: uuid
+        state:
+          $ref: '#/components/schemas/TripState'
+        actorId:
+          type: string
+          example: "usr_driver_202"
+        actorRole:
+          type: string
+          enum: [CLIENT, DRIVER, OPERATOR, SYSTEM]
+        reason:
+          type: string
+          nullable: true
+        metadata:
+          type: object
+          nullable: true
+          additionalProperties: true
+          example: { "distanceKm": 6.4, "durationMinutes": 18 }
+        createdAt:
+          type: string
+          format: date-time
+
+    ErrorResponse:
+      type: object
+      required:
+        - code
+        - message
+        - timestamp
+      properties:
+        code:
+          type: string
+          example: "INVALID_STATE_TRANSITION"
+        message:
+          type: string
+          example: "No se puede pasar a IN_PROGRESS desde el estado PENDING_ARRIVAL"
+        correlationId:
+          type: string
+          description: ID de correlación para trazabilidad en logs (RNF-14)
+        timestamp:
+          type: string
+          format: date-time
+
+  responses:
+    BadRequest:
+      description: Datos de entrada inválidos o faltantes
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Unauthorized:
+      description: Token JWT ausente, inválido o expirado (M1)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Forbidden:
+      description: El rol o usuario autenticado no tiene permisos para realizar esta acción sobre el viaje
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    NotFound:
+      description: Viaje no encontrado
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
