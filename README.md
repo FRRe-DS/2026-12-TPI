@@ -1,13 +1,17 @@
-# Módulo M6: Viajes y Ciclo de Vida 🚗🛵
+# Módulo M6: Viajes y Ciclo de Vida 
 **Desarrollo de Software - 2026 | Grupo 12**
 
 Repositorio correspondiente al **Módulo M6 (Viajes y Ciclo de Vida)** de la plataforma distribuida de movilidad urbana bajo demanda.
 
 ## Integrantes - Grupo 12
-* [Di Rado Luciano] - Legajo: [26957]
-* [Pozzer Maurizio] - Legajo: [27420]
-* [Vignoles Francisco] - Legajo: [27259]
-* (agregar los nombres y legajos restantes)
+* Ayala Trangoni Malena Esperanza - Legajo: 
+* Di Rado Luciano - Legajo: 26957
+* Frankhauser Agostina - Legajo: 27311
+* Kowtun Andrea - Legajo: 27049
+* Montiel Lautaro - Legajo: 28810 
+* Pared Chudy Nahuel - Legajo: 25696
+* Pozzer Maurizio - Legajo: 27420
+* Vignoles Francisco - Legajo: 27259
 
 ---
 
