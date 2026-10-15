@@ -1,0 +1,70 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum TripState {
+  PENDING_ARRIVAL
+  DRIVER_ARRIVED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED_BY_CLIENT
+  CANCELLED_BY_DRIVER
+}
+
+enum VehicleType {
+  AUTO
+  MOTO
+}
+
+enum ActorRole {
+  CLIENT
+  DRIVER
+  OPERATOR
+  SYSTEM
+}
+
+model Trip {
+  id              String             @id @default(uuid())
+  requestId       String
+  clientId        String
+  driverId        String
+  vehicleType     VehicleType
+  origin          String
+  destination     String
+  state           TripState          @default(PENDING_ARRIVAL)
+  distanceKm      Float?
+  durationMinutes Int?
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+  events          TripEventHistory[]
+
+  @@index([requestId])
+  @@index([clientId])
+  @@index([driverId, state])
+}
+
+model TripEventHistory {
+  id        String    @id @default(uuid())
+  tripId    String
+  trip      Trip      @relation(fields: [tripId], references: [id])
+  state     TripState
+  actorId   String
+  actorRole ActorRole
+  reason    String?
+  metadata  Json?
+  createdAt DateTime  @default(now())
+
+  @@index([tripId, createdAt])
+}
