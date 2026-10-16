@@ -76,13 +76,17 @@ Almacena el estado vigente y los datos principales del viaje.
 | Campo | Tipo | Restricciones | Descripción |
 | :--- | :--- | :--- | :--- |
 | `id` | `UUID (String)` | `PK`, No nulo | Identificador único del viaje generado automáticamente. |
+| `requestId` | `String` | **`UNIQUE`**, No nulo | Identificador de la solicitud de despacho de M5 que originó el viaje (clave de idempotencia / RNF-09). |
 | `clientId` | `String` | No nulo | Identificador del cliente asociado al viaje. |
 | `driverId` | `String` | No nulo | Identificador del conductor asignado por despacho (M5). |
+| `vehicleType` | `VehicleType (Enum)` | No nulo | Tipo de vehículo del viaje (`AUTO` / `MOTO`). |
 | `origin` | `String` | No nulo | Coordenadas o dirección del punto de origen. |
 | `destination` | `String` | No nulo | Coordenadas o dirección del destino final. |
-| `state` | `String / Enum` | No nulo (Default: `PENDING_ARRIVAL`) | Estado vigente dentro de la máquina de estados. |
+| `state` | `TripState (Enum)` | No nulo (Default: `PENDING_ARRIVAL`) | Estado vigente dentro de la máquina de estados. |
+| `distanceKm` | `Float` | Nullable | Distancia recorrida registrada al finalizar (RF-6.5). |
+| `durationMinutes` | `Int` | Nullable | Duración del viaje en minutos registrada al finalizar (RF-6.5). |
 | `createdAt` | `DateTime` | No nulo (Default: `now()`) | Fecha y hora de creación del viaje. |
-| `updatedAt` | `DateTime` | No nulo | Fecha y hora de la última transición registrada. |
+| `updatedAt` | `DateTime` | No nulo (Auto) | Fecha y hora de la última modificación de la fila. |
 
 ### 2. Tabla `TripEventHistory` (Auditoría inmutable - RF-6.8)
 Funciona como un registro *append-only* (solo inserción). Los registros existentes nunca se modifican ni se eliminan; cada transición agrega una nueva fila para mantener trazabilidad completa.
@@ -90,12 +94,20 @@ Funciona como un registro *append-only* (solo inserción). Los registros existen
 | Campo | Tipo | Restricciones | Descripción |
 | :--- | :--- | :--- | :--- |
 | `id` | `UUID (String)` | `PK`, No nulo | Identificador único del evento de auditoría. |
-| `tripId` | `UUID (String)` | `FK` (`Trip.id`), No nulo | Referencia al viaje al que pertenece el evento. |
-| `state` | `String / Enum` | No nulo | Nuevo estado al que transicionó el viaje. |
-| `actor` | `String` | No nulo | Rol e identificador del usuario o sistema que ejecutó la acción. |
+| `tripId` | `UUID (String)` | `FK` (`Trip.id`, `ON DELETE RESTRICT`), No nulo | Referencia al viaje al que pertenece el evento. |
+| `state` | `TripState (Enum)` | No nulo | Estado al que transicionó el viaje con este evento. |
+| `actorId` | `String` | No nulo | Identificador del usuario o sistema que ejecutó la acción. |
+| `actorRole` | `ActorRole (Enum)` | No nulo | Rol del actor que ejecutó la acción. |
 | `reason` | `String` | Nullable (Obligatorio en cancelaciones) | Motivo justificado de la cancelación (RF-6.6 / RF-6.7). |
-| `metadata` | `JSON` | Nullable | Datos adicionales estructurados (ej. `distanceKm` y `timeMinutes` al finalizar). |
+| `metadata` | `JSONB` | Nullable | Datos adicionales estructurados (ej. `distanceKm` y `durationMinutes` al finalizar). |
 | `createdAt` | `DateTime` | No nulo (Default: `now()`) | Marca temporal exacta de la transición. |
+
+### 3. Enumeraciones (PostgreSQL `ENUM`)
+| Enum | Valores | Uso |
+| :--- | :--- | :--- |
+| `TripState` | `PENDING_ARRIVAL`, `DRIVER_ARRIVED`, `IN_PROGRESS`, `COMPLETED`, `CANCELLED_BY_CLIENT`, `CANCELLED_BY_DRIVER` | Estado del viaje (`Trip.state` y `TripEventHistory.state`). |
+| `VehicleType` | `AUTO`, `MOTO` | Tipo de vehículo solicitado (`Trip.vehicleType`). |
+| `ActorRole` | `CLIENT`, `DRIVER`, `OPERATOR`, `SYSTEM` | Rol del actor de cada transición (`TripEventHistory.actorRole`). |
 
 ---
 
@@ -119,7 +131,7 @@ La especificación detallada de los endpoints se encuentra definida bajo el est�
 *(En próximas iteraciones se publicarán mediante RabbitMQ según RNF-10)*:
 * **`DriverArrived`** $\rightarrow$ **M8 (Notificaciones):** Avisa al pasajero que el chofer llegó al punto de encuentro.
 * **`TripStarted`** $\rightarrow$ **M8 (Notificaciones):** Notifica el inicio formal del viaje tras validar el QR.
-* **`TripCompleted`** $\rightarrow$ **M7 (Pagos)** para cálculo y cobro de tarifa final; **M8** para emisión de comprobante PDF; **M3** para habilitar calificación.
+* **`TripCompleted`** $\rightarrow$ **M7 (Pagos)** para cálculo y cobro de tarifa final; **M8** para emisión de comprobante PDF; **M2** y **M3** para habilitar la calificación cruzada (RF-2.5 / RF-3.7).
 * **`TripCancelledByClient`** $\rightarrow$ **M7 (Pagos)** para evaluar cargo por cancelación según minutos transcurridos; **M8** para notificar al conductor.
 * **`TripCancelledByDriver`** $\rightarrow$ **M5 (Despacho)** para devolver la solicitud a búsqueda de nuevo conductor; **M8** para notificar al cliente.
 
@@ -129,7 +141,8 @@ La especificación detallada de los endpoints se encuentra definida bajo el est�
 
 * `prisma/schema.prisma`: Definición de los modelos `Trip` y `TripEventHistory` para PostgreSQL.
 * `prisma/migrations/`: Historial de migraciones SQL versionadas.
-* `generated/prisma/`: Cliente tipado autogenerado por Prisma ORM.
+* `generated/prisma/`: Cliente tipado autogenerado por Prisma ORM (se genera con `npx prisma generate`; no versionado).
+* `openapi.yaml`: Contrato de las interfaces síncronas del módulo (RNF-03).
 * `docker-compose.yml`: Definición del contenedor OCI de PostgreSQL (RNF-04).
 * `.env.example`: Plantilla de variables de entorno requeridas (RNF-06).
 * `prisma.config.ts` y `tsconfig.json`: Configuración de Prisma y del compilador TypeScript.
