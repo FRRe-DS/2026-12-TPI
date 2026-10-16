@@ -37,7 +37,7 @@ enum ActorRole {
 
 model Trip {
   id              String             @id @default(uuid())
-  requestId       String
+  requestId       String             @unique
   clientId        String
   driverId        String
   vehicleType     VehicleType
@@ -50,7 +50,6 @@ model Trip {
   updatedAt       DateTime           @updatedAt
   events          TripEventHistory[]
 
-  @@index([requestId])
   @@index([clientId])
   @@index([driverId, state])
 }
