@@ -45,8 +45,9 @@ paths:
       tags: [Trips]
       summary: Crear un nuevo viaje tras asignación en despacho (Desde M5)
       description: |
-        Inicia el ciclo de vida del viaje en estado `PENDING_ARRIVAL`. 
-        Es idempotente respecto a `requestId` (RNF-08 / RNF-09).
+        Inicia el ciclo de vida del viaje en estado `PENDING_ARRIVAL`.
+        Es idempotente respecto a `requestId`: si el mismo `requestId` llega más de una vez
+        con los mismos datos, no se crea otro viaje y se devuelve el ya existente (RNF-08 / RNF-09).
       requestBody:
         required: true
         content:
@@ -55,7 +56,13 @@ paths:
               $ref: '#/components/schemas/CreateTripRequest'
       responses:
         '201':
-          description: Viaje creado exitosamente en estado PENDING_ARRIVAL
+          description: Viaje creado exitosamente (por primera vez) en estado PENDING_ARRIVAL
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Trip'
+        '200':
+          description: Ya existía un viaje para ese `requestId`; se devuelve el mismo viaje sin crear otro
           content:
             application/json:
               schema:
@@ -65,7 +72,7 @@ paths:
         '401':
           $ref: '#/components/responses/Unauthorized'
         '409':
-          description: Ya existe un viaje creado para el `requestId` proporcionado (Idempotencia / Concurrencia)
+          description: El `requestId` ya existe pero con datos distintos a los del pedido original
           content:
             application/json:
               schema:
@@ -335,11 +342,7 @@ components:
         - CANCELLED_BY_CLIENT
         - CANCELLED_BY_DRIVER
 
-    VehicleType:
-      type: string
-      enum:
-        - AUTO
-        - MOTO
+    
 
     CreateTripRequest:
       type: object
@@ -347,9 +350,11 @@ components:
         - requestId
         - clientId
         - driverId
-        - vehicleType
-        - origin
-        - destination
+        - vehicleId
+        - originLatitude
+        - originLongitude
+        - destinationLatitude
+        - destinationLongitude
       properties:
         requestId:
           type: string
@@ -357,18 +362,40 @@ components:
           example: "a1b2c3d4-e5f6-7890-1234-567890abcdef"
         clientId:
           type: string
-          example: "usr_client_101"
+          format: uuid
+          example: "a3e4d8c2-75b1-4f92-8b12-456789abcdef"
         driverId:
           type: string
-          example: "usr_driver_202"
-        vehicleType:
-          $ref: '#/components/schemas/VehicleType'
-        origin:
+          format: uuid
+          example: "b4f5e9d3-86c2-4a13-9c23-567890abcdef"
+        vehicleId:
           type: string
-          example: "Av. 3 de Abril 1200, Corrientes"
-        destination:
-          type: string
-          example: "French 414, Resistencia"
+          format: uuid
+          example: "c5a6f0e4-97d3-4b24-8d34-678901abcdef"
+        originLatitude:
+          type: number
+          format: double
+          minimum: -90
+          maximum: 90
+          example: -27.4512
+        originLongitude:
+          type: number
+          format: double
+          minimum: -180
+          maximum: 180
+          example: -58.8289
+        destinationLatitude:
+          type: number
+          format: double
+          minimum: -90
+          maximum: 90
+          example: -27.4500
+        destinationLongitude:
+          type: number
+          format: double
+          minimum: -180
+          maximum: 180
+          example: -58.8000
 
     StartTripRequest:
       type: object
@@ -418,14 +445,25 @@ components:
           format: uuid
         clientId:
           type: string
+          format: uuid
         driverId:
           type: string
-        vehicleType:
-          $ref: '#/components/schemas/VehicleType'
-        origin:
+          format: uuid
+        vehicleId:
           type: string
-        destination:
-          type: string
+          format: uuid
+        originLatitude:
+          type: number
+          format: double
+        originLongitude:
+          type: number
+          format: double
+        destinationLatitude:
+          type: number
+          format: double
+        destinationLongitude:
+          type: number
+          format: double
         state:
           $ref: '#/components/schemas/TripState'
         distanceKm:
@@ -455,7 +493,10 @@ components:
           $ref: '#/components/schemas/TripState'
         actorId:
           type: string
-          example: "usr_driver_202"
+          format: uuid
+          nullable: true
+          description: Identificador de quien hizo el cambio. Queda vacío cuando `actorRole` es `SYSTEM`.
+          example: "b4f5e9d3-86c2-4a13-9c23-567890abcdef"
         actorRole:
           type: string
           enum: [CLIENT, DRIVER, OPERATOR, SYSTEM]
