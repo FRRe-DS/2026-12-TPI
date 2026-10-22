@@ -18,7 +18,7 @@ const VALID_TRANSITIONS: Record<TripState, TripState[]> = {
 async function parseBody(req: http.IncomingMessage): Promise<any> {
   return new Promise((resolve, reject) => {
     let data = "";
-    req.on("data", (chunk) => (data += chunk));
+    req.on("data", (chunk: Buffer) => (data += chunk.toString()));
     req.on("end", () => {
       if (!data) return resolve({});
       try {
@@ -35,7 +35,7 @@ function sendJson(res: http.ServerResponse, status: number, payload: unknown) {
   res.end(JSON.stringify(payload));
 }
 
-const server = http.createServer(async (req, res) => {
+const server = http.createServer(async (req: http.IncomingMessage, res: http.ServerResponse) => {
   const url = new URL(req.url || "/", `http://localhost:${PORT}`);
 
   try {
