@@ -1,0 +1,72 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum TripState {
+  PENDING_ARRIVAL
+  DRIVER_ARRIVED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED_BY_CLIENT
+  CANCELLED_BY_DRIVER
+
+  @@map("trip_state")
+}
+
+enum ActorRole {
+  CLIENT
+  DRIVER
+  OPERATOR
+  SYSTEM
+
+  @@map("actor_role")
+}
+
+model Trip {
+  id                   String             @id @default(uuid()) @db.Uuid
+  requestId            String             @unique @map("request_id") @db.Uuid
+  clientId             String             @map("client_id") @db.Uuid
+  driverId             String             @map("driver_id") @db.Uuid
+  vehicleId            String             @map("vehicle_id") @db.Uuid
+  originLatitude       Float              @map("origin_latitude")
+  originLongitude      Float              @map("origin_longitude")
+  destinationLatitude  Float              @map("destination_latitude")
+  destinationLongitude Float              @map("destination_longitude")
+  state                TripState          @default(PENDING_ARRIVAL)
+  distanceKm           Float?             @map("distance_km")
+  durationMinutes      Int?               @map("duration_minutes")
+  createdAt            DateTime           @default(now()) @map("created_at")
+  updatedAt            DateTime           @updatedAt @map("updated_at")
+  events               TripEventHistory[]
+
+  @@index([clientId])
+  @@index([driverId, state])
+  @@map("trips")
+}
+
+model TripEventHistory {
+  id        String    @id @default(uuid()) @db.Uuid
+  tripId    String    @map("trip_id") @db.Uuid
+  trip      Trip      @relation(fields: [tripId], references: [id])
+  state     TripState
+  actorId   String?   @map("actor_id") @db.Uuid
+  actorRole ActorRole @map("actor_role")
+  reason    String?
+  metadata  Json?
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  @@index([tripId, createdAt])
+  @@map("trip_event_history")
+}
