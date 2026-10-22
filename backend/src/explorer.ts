@@ -570,14 +570,14 @@ const HTML_PAGE = `<!DOCTYPE html>
           let btns = '';
           if (t.state === 'PENDING_ARRIVAL') {
             btns = \`
-              <button class="sm" onclick="transition('\${t.id}', 'DRIVER_ARRIVED')">📍 Arrived</button>
-              <button class="sm danger" onclick="transition('\${t.id}', 'CANCELLED_BY_CLIENT', 'Cancelado por el pasajero')">✖ Cancel Cliente</button>
-              <button class="sm warning" onclick="transition('\${t.id}', 'CANCELLED_BY_DRIVER', 'Desperfecto mecánico')">✖ Cancel Chofer</button>
+              <button class="sm" onclick="transition('\${t.id}', 'DRIVER_ARRIVED')">📍 Llego </button>
+              <button class="sm danger" onclick="transition('\${t.id}', 'CANCELLED_BY_CLIENT', 'Cancelado por el pasajero')">✖ Cancelo Cliente</button>
+              <button class="sm warning" onclick="transition('\${t.id}', 'CANCELLED_BY_DRIVER', 'Desperfecto mecánico')">✖ Cancelo conductor</button>
             \`;
           } else if (t.state === 'DRIVER_ARRIVED') {
             btns = \`
               <button class="sm success" onclick="transition('\${t.id}', 'IN_PROGRESS')">▶ Validar QR e Iniciar</button>
-              <button class="sm danger" onclick="transition('\${t.id}', 'CANCELLED_BY_CLIENT', 'Cliente no salió')">✖ Cancel Cliente</button>
+              <button class="sm danger" onclick="transition('\${t.id}', 'CANCELLED_BY_CLIENT', 'Cancelado por el pasajero')">✖ Cancelo Cliente</button>
             \`;
           } else if (t.state === 'IN_PROGRESS') {
             btns = \`
