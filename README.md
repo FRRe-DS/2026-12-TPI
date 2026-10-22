@@ -66,88 +66,47 @@ stateDiagram-v2
 
 ## Modelo de Persistencia y Diccionario de Datos (RNF-05)
 
-Cumpliendo con el principio de **propiedad de datos**, el Módulo M6 administra su propia base de datos **PostgreSQL** de forma autónoma mediante **Prisma ORM**. No se almacenan datos internos de perfiles ni tarifas, referenciando a otros dominios únicamente por sus identificadores (`UUID`).
+Cumpliendo con el principio de **propiedad de datos**, el Módulo M6 administra su propia base de datos **PostgreSQL** de forma autónoma mediante **Prisma ORM**. No se almacenan datos internos de perfiles ni tarifas, referenciando a otros dominios únicamente por sus identificadores.
 
-En PostgreSQL, las tablas, columnas y enumeraciones están normalizadas bajo el estándar SQL **`snake_case`** (`trips`, `trip_event_history`), mapeadas de forma transparente a **`camelCase`** en TypeScript mediante las directivas `@@map` y `@map` de Prisma.
+Existe una relación de **uno a muchos (`1:N`)** entre la cabecera del viaje y su historial de eventos:
 
-Existe una relación de **uno a muchos (`1:N`)** entre la cabecera del viaje (`Trip` / `trips`) y su historial de eventos (`TripEventHistory` / `trip_event_history`):
-
-```mermaid
-erDiagram
-    TRIPS ||--o{ TRIP_EVENT_HISTORY : "registra (1:N)"
-
-    TRIPS {
-        uuid id PK
-        uuid request_id UK "Idempotencia (M5)"
-        uuid client_id "FK lógica (M2)"
-        uuid driver_id "FK lógica (M3)"
-        uuid vehicle_id "FK lógica (M3)"
-        float origin_latitude
-        float origin_longitude
-        float destination_latitude
-        float destination_longitude
-        trip_state state "Default: PENDING_ARRIVAL"
-        float distance_km "Nullable"
-        int duration_minutes "Nullable"
-        timestamp created_at
-        timestamp updated_at
-    }
-
-    TRIP_EVENT_HISTORY {
-        uuid id PK
-        uuid trip_id FK "ON DELETE RESTRICT"
-        trip_state state
-        uuid actor_id "Nullable"
-        actor_role actor_role
-        string reason "Nullable"
-        jsonb metadata "Nullable"
-        timestamp created_at
-    }
-```
-
-### 1. Tabla `trips` — Modelo `Trip` (Cabecera del viaje)
+### 1. Tabla `Trip` (Cabecera del viaje)
 Almacena el estado vigente y los datos principales del viaje.
 
-| Campo (Prisma) | Columna SQL (`snake_case`) | Tipo (PostgreSQL) | Restricciones | Descripción |
-| :--- | :--- | :--- | :--- | :--- |
-| `id` | `id` | `UUID` | `PK`, `NOT NULL`, `DEFAULT uuid()` | Identificador único del viaje generado automáticamente. |
-| `requestId` | `request_id` | `UUID` | **`UNIQUE`**, `NOT NULL` | Identificador de la solicitud de despacho de M5 que originó el viaje (clave de idempotencia / RNF-09). |
-| `clientId` | `client_id` | `UUID` | `NOT NULL`, `INDEX` | Identificador del cliente asociado al viaje. |
-| `driverId` | `driver_id` | `UUID` | `NOT NULL`, `INDEX (driver_id, state)` | Identificador del conductor asignado por despacho (M5). |
-| `vehicleId` | `vehicle_id` | `UUID` | `NOT NULL` | Identificador del vehículo asignado al viaje. |
-| `originLatitude` | `origin_latitude` | `DOUBLE PRECISION` | `NOT NULL` | Latitud del punto de origen (`-90` a `90`). |
-| `originLongitude` | `origin_longitude` | `DOUBLE PRECISION` | `NOT NULL` | Longitud del punto de origen (`-180` a `180`). |
-| `destinationLatitude` | `destination_latitude` | `DOUBLE PRECISION` | `NOT NULL` | Latitud del punto de destino (`-90` a `90`). |
-| `destinationLongitude` | `destination_longitude` | `DOUBLE PRECISION` | `NOT NULL` | Longitud del punto de destino (`-180` a `180`). |
-| `state` | `state` | `trip_state (ENUM)` | `NOT NULL`, `DEFAULT 'PENDING_ARRIVAL'` | Estado vigente dentro de la máquina de estados. |
-| `distanceKm` | `distance_km` | `DOUBLE PRECISION` | `NULLABLE` | Distancia recorrida en kilómetros registrada al finalizar (RF-6.5). |
-| `durationMinutes` | `duration_minutes` | `INTEGER` | `NULLABLE` | Duración del viaje en minutos registrada al finalizar (RF-6.5). |
-| `createdAt` | `created_at` | `TIMESTAMP(3)` | `NOT NULL`, `DEFAULT CURRENT_TIMESTAMP` | Fecha y hora de creación del viaje. |
-| `updatedAt` | `updated_at` | `TIMESTAMP(3)` | `NOT NULL` (Auto-actualizado) | Fecha y hora de la última modificación de la fila. |
+| Campo | Tipo | Restricciones | Descripción |
+| :--- | :--- | :--- | :--- |
+| `id` | `UUID` | `PK`, No nulo | Identificador único del viaje generado automáticamente. |
+| `requestId` | `UUID` | **`UNIQUE`**, No nulo | Identificador de la solicitud de despacho de M5 que originó el viaje (clave de idempotencia / RNF-09). |
+| `clientId` | `UUID` | No nulo | Identificador del cliente asociado al viaje (dominio M2). |
+| `driverId` | `UUID` | No nulo | Identificador del conductor asignado por despacho (dominio M3). |
+| `vehicleId` | `UUID` | No nulo | Identificador del vehículo asignado (dominio M3). El tipo `AUTO` / `MOTO` se obtiene de M3. |
+| `originLatitude` / `originLongitude` | `DOUBLE PRECISION` | No nulo | Coordenadas del punto de retiro. |
+| `destinationLatitude` / `destinationLongitude` | `DOUBLE PRECISION` | No nulo | Coordenadas del destino final. |
+| `state` | `TripState (Enum)` | No nulo (Default: `PENDING_ARRIVAL`) | Estado vigente dentro de la máquina de estados. |
+| `distanceKm` | `Float` | Nullable | Distancia recorrida registrada al finalizar (RF-6.5). |
+| `durationMinutes` | `Int` | Nullable | Duración del viaje en minutos registrada al finalizar (RF-6.5). |
+| `createdAt` | `DateTime` | No nulo (Default: `now()`) | Fecha y hora de creación del viaje. |
+| `updatedAt` | `DateTime` | No nulo (Auto) | Fecha y hora de la última modificación de la fila. |
 
-### 2. Tabla `trip_event_history` — Modelo `TripEventHistory` (Auditoría inmutable - RF-6.8)
+### 2. Tabla `TripEventHistory` (Auditoría inmutable - RF-6.8)
 Funciona como un registro *append-only* (solo inserción). Los registros existentes nunca se modifican ni se eliminan; cada transición agrega una nueva fila para mantener trazabilidad completa.
 
-| Campo (Prisma) | Columna SQL (`snake_case`) | Tipo (PostgreSQL) | Restricciones | Descripción |
-| :--- | :--- | :--- | :--- | :--- |
-| `id` | `id` | `UUID` | `PK`, `NOT NULL`, `DEFAULT uuid()` | Identificador único del evento de auditoría. |
-| `tripId` | `trip_id` | `UUID` | `FK` (`trips.id`, `ON DELETE RESTRICT`), `NOT NULL` | Referencia al viaje al que pertenece el evento. |
-| `state` | `state` | `trip_state (ENUM)` | `NOT NULL` | Estado al que transicionó el viaje con este evento. |
-| `actorId` | `actor_id` | `UUID` | `NULLABLE` | Identificador del usuario que ejecutó la acción (`null` cuando actúa `SYSTEM`). |
-| `actorRole` | `actor_role` | `actor_role (ENUM)` | `NOT NULL` | Rol del actor que ejecutó la acción (`CLIENT`, `DRIVER`, `OPERATOR`, `SYSTEM`). |
-| `reason` | `reason` | `TEXT` | `NULLABLE` (Obligatorio en cancelaciones) | Motivo justificado de la cancelación (RF-6.6 / RF-6.7). |
-| `metadata` | `metadata` | `JSONB` | `NULLABLE` | Datos adicionales estructurados (ej. `distanceKm` y `durationMinutes` al finalizar). |
-| `createdAt` | `created_at` | `TIMESTAMP(3)` | `NOT NULL`, `DEFAULT CURRENT_TIMESTAMP` | Marca temporal exacta de la transición. |
-
-### 3. Índices y Enumeraciones (PostgreSQL)
-| Elemento | Nombre en PostgreSQL | Definición / Valores | Propósito |
+| Campo | Tipo | Restricciones | Descripción |
 | :--- | :--- | :--- | :--- |
-| **Enum `TripState`** | `trip_state` | `PENDING_ARRIVAL`, `DRIVER_ARRIVED`, `IN_PROGRESS`, `COMPLETED`, `CANCELLED_BY_CLIENT`, `CANCELLED_BY_DRIVER` | Estado del viaje (`trips.state` y `trip_event_history.state`). |
-| **Enum `ActorRole`** | `actor_role` | `CLIENT`, `DRIVER`, `OPERATOR`, `SYSTEM` | Rol del actor de cada transición (`trip_event_history.actor_role`). |
-| **Unique Index** | `trips_request_id_key` | `UNIQUE (request_id)` | Garantiza idempotencia evitando viajes duplicados ante reintentos de M5 (RNF-08 / RNF-09). |
-| **Index** | `trips_client_id_idx` | `INDEX (client_id)` | Optimiza la consulta de historial de viajes por cliente (`GET /trips?clientId=...`). |
-| **Composite Index** | `trips_driver_id_state_idx` | `INDEX (driver_id, state)` | Optimiza la búsqueda de viajes activos o históricos de un conductor. |
-| **Composite Index** | `trip_event_history_trip_id_created_at_idx` | `INDEX (trip_id, created_at)` | Optimiza la lectura ordenada cronológicamente de la auditoría (`GET /trips/{id}/history`). |
+| `id` | `UUID` | `PK`, No nulo | Identificador único del evento de auditoría. |
+| `tripId` | `UUID` | `FK` (`Trip.id`, `ON DELETE RESTRICT`), No nulo | Referencia al viaje al que pertenece el evento. |
+| `state` | `TripState (Enum)` | No nulo | Estado al que transicionó el viaje con este evento. |
+| `actorId` | `UUID` | Nullable | Identificador del usuario que ejecutó la acción. Es nulo cuando `actorRole = SYSTEM`. |
+| `actorRole` | `ActorRole (Enum)` | No nulo | Rol del actor que ejecutó la acción. |
+| `reason` | `String` | Nullable (Obligatorio en cancelaciones) | Motivo justificado de la cancelación (RF-6.6 / RF-6.7). |
+| `metadata` | `JSONB` | Nullable | Datos adicionales estructurados (ej. `distanceKm` y `durationMinutes` al finalizar). |
+| `createdAt` | `DateTime` | No nulo (Default: `now()`) | Marca temporal exacta de la transición. |
+
+### 3. Enumeraciones (PostgreSQL `ENUM`)
+| Enum | Valores | Uso |
+| :--- | :--- | :--- |
+| `TripState` | `PENDING_ARRIVAL`, `DRIVER_ARRIVED`, `IN_PROGRESS`, `COMPLETED`, `CANCELLED_BY_CLIENT`, `CANCELLED_BY_DRIVER` | Estado del viaje (`Trip.state` y `TripEventHistory.state`). |
+| `ActorRole` | `CLIENT`, `DRIVER`, `OPERATOR`, `SYSTEM` | Rol del actor de cada transición (`TripEventHistory.actorRole`). |
 
 ---
 
@@ -158,8 +117,8 @@ La especificación detallada de los endpoints se encuentra definida bajo el est�
 
 | Método | Ruta | Rol / Origen | Acción / Transición |
 | :--- | :--- | :--- | :--- |
-| `POST` | `/trips` | **M5 (Despacho)** | Crea el viaje inicial en estado `PENDING_ARRIVAL`. |
-| `GET` | `/trips?clientId={id}` | **M2 (Clientes)** / `CLIENT` | Consulta el historial resumido de viajes del cliente (RF-2.4). |
+| `POST` | `/trips` | **M5 (Despacho)** / `SYSTEM` | Crea el viaje inicial en estado `PENDING_ARRIVAL` (idempotente por `requestId`). |
+| `GET` | `/trips?clientId={id}&page=&pageSize=` | **M2 (Clientes)** / `CLIENT` / `OPERATOR` | Historial resumido y paginado (`TripSummary`, sin coordenadas) del cliente (RF-2.4 / RF-4.7). |
 | `GET` | `/trips/{id}` | `CLIENT`, `DRIVER`, `OPERATOR` | Consulta el estado actual y resumen del viaje (RF-6.2). |
 | `POST` | `/trips/{id}/arrived` | `DRIVER` | Registra arribo en punto de retiro (`DRIVER_ARRIVED` - RF-6.3). |
 | `POST` | `/trips/{id}/start` | `DRIVER` (Valida con **M8**) | Valida QR de un solo uso e inicia viaje (`IN_PROGRESS` - RF-6.4). |
@@ -167,34 +126,49 @@ La especificación detallada de los endpoints se encuentra definida bajo el est�
 | `POST` | `/trips/{id}/cancel` | `CLIENT` / `DRIVER` | Cancela el viaje registrando el motivo obligatorio (RF-6.6 / RF-6.7). |
 | `GET` | `/trips/{id}/history` | `OPERATOR` | Consulta el registro de auditoría de transiciones (RF-6.8). |
 
-### Salidas Asíncronas (Eventos de Dominio Emitidos)
-*(En próximas iteraciones se publicarán mediante RabbitMQ según RNF-10)*:
-* **`DriverArrived`** $\rightarrow$ **M8 (Notificaciones):** Avisa al pasajero que el chofer llegó al punto de encuentro.
-* **`TripStarted`** $\rightarrow$ **M8 (Notificaciones):** Notifica el inicio formal del viaje tras validar el QR.
-* **`TripCompleted`** $\rightarrow$ **M7 (Pagos)** para cálculo y cobro de tarifa final; **M8** para emisión de comprobante PDF; **M2** y **M3** para habilitar la calificación cruzada (RF-2.5 / RF-3.7).
-* **`TripCancelledByClient`** $\rightarrow$ **M7 (Pagos)** para evaluar cargo por cancelación según minutos transcurridos; **M8** para notificar al conductor.
-* **`TripCancelledByDriver`** $\rightarrow$ **M5 (Despacho)** para devolver la solicitud a búsqueda de nuevo conductor; **M8** para notificar al cliente.
+### Salidas Asíncronas (Catálogo de Eventos de Dominio - RNF-03)
+*(En próximas iteraciones se publicarán mediante RabbitMQ según RNF-10.)*
+
+Todos los eventos comparten el sobre `EventEnvelope` (`eventId`, `eventType`, `eventVersion`, `occurredAt`, `tripId`, `correlationId`) y un `payload` específico. Los esquemas completos están en `openapi.yaml` → `components/schemas`. Los consumidores deben deduplicar por `eventId` (RNF-09).
+
+| Evento | Disparador | Payload | Consumidores | Propósito |
+| :--- | :--- | :--- | :--- | :--- |
+| `TripCreated` | `POST /trips` | `TripCreatedPayload` | M8, M4 | M8 genera el QR de un solo uso (RF-8.3); M4 mantiene al conductor reservado (RF-4.4). |
+| `DriverArrived` | `POST /trips/{id}/arrived` | `TripStatusPayload` | M8 | Aviso al cliente de que el conductor llegó (RF-8.1). |
+| `TripStarted` | `POST /trips/{id}/start` | `TripStatusPayload` | M8 | Aviso de inicio del viaje (RF-8.1). |
+| `TripCompleted` | `POST /trips/{id}/complete` | `TripCompletedPayload` | M7, M8, M4, M2, M3 | Cobro y liquidación (RF-7.3 / RF-7.8); comprobante PDF (RF-8.4); liberar conductor (RF-4.4); habilitar calificaciones (RF-2.5 / RF-3.7). |
+| `TripCancelledByClient` | `POST /trips/{id}/cancel` (`CLIENT`) | `TripCancelledPayload` | M7, M8, M4 | Cargo de cancelación (RF-7.4); aviso al conductor; liberar conductor. |
+| `TripCancelledByDriver` | `POST /trips/{id}/cancel` (`DRIVER`) | `TripCancelledPayload` | M5, M8, M4 | Devolver la solicitud a despacho (RF-6.7); aviso al cliente; liberar conductor. |
+
+### Dependencias Síncronas Salientes
+* **M8:** validación del token / QR de un solo uso en `POST /trips/{id}/start`. Ante timeout o indisponibilidad se responde `503` sin modificar el estado (RNF-13).
+* **M1:** validación del JWT y sus claims (`sub`, `role`) en cada operación protegida (RF-1.4).
+
+---
+
+## Decisiones de Diseño
+
+| Decisión | Justificación |
+| :--- | :--- |
+| Un viaje en `IN_PROGRESS` no puede cancelarse por cliente ni conductor. | Una vez validado el QR, el servicio está en curso; los incidentes durante el viaje serán gestionados por el operador (alcance TP2). |
+| M6 no almacena el tipo de vehículo. | Es dato del dominio de M3 (RNF-05); M7 lo obtiene de M3 mediante `vehicleId`. |
+| Creación idempotente por `requestId` (`UNIQUE`). | Un reintento de M5 devuelve el viaje existente (`200`); el mismo `requestId` con datos distintos devuelve `409` (RNF-09). |
+| Transiciones con actualización condicional: `UPDATE ... WHERE id = ? AND state = <estado esperado>`. | Si la actualización afecta 0 filas, otra petición ya cambió el estado y se responde `409`. Impide doble inicio, doble finalización o cancelación concurrente (RNF-08). |
+| Transición e inserción en `TripEventHistory` dentro de la misma transacción. | El historial nunca queda desfasado del estado vigente (RF-6.8). |
+| Autenticación servicio a servicio con rol `SYSTEM`. | M5 invoca `POST /trips` con un token de servicio emitido por M1 (RF-1.4); los usuarios finales no pueden crear viajes. |
+| El historial para M2 expone `TripSummary` sin coordenadas. | Minimiza la exposición de ubicaciones (RF-4.7 / RNF-19). |
 
 ---
 
 ## Estructura del Repositorio
 
-```text
-2026-12-TPI/
-├── backend/
-│   ├── prisma/
-│   │   ├── schema.prisma      # Modelos Trip y TripEventHistory para PostgreSQL
-│   │   └── migrations/        # Historial de migraciones SQL versionadas
-│   ├── src/                   # Código fuente del servidor y explorador de persistencia
-│   ├── generated/prisma/      # Cliente tipado autogenerado por Prisma ORM (no versionado)
-│   ├── package.json           # Dependencias y scripts del backend
-│   ├── prisma.config.ts       # Configuración de Prisma ORM
-│   └── tsconfig.json          # Configuración del compilador TypeScript
-├── frontend/                  # Aplicación Frontend del módulo (próximas iteraciones)
-├── docker-compose.yml         # Definición del contenedor OCI de PostgreSQL (RNF-04)
-├── openapi.yaml               # Contrato de las interfaces síncronas del módulo (RNF-03)
-└── .env.example               # Plantilla de variables de entorno requeridas (RNF-06)
-```
+* `prisma/schema.prisma`: Definición de los modelos `Trip` y `TripEventHistory` para PostgreSQL.
+* `prisma/migrations/`: Historial de migraciones SQL versionadas.
+* `generated/prisma/`: Cliente tipado autogenerado por Prisma ORM (se genera con `npx prisma generate`; no versionado).
+* `openapi.yaml`: Contrato de las interfaces síncronas del módulo y catálogo de esquemas de eventos (RNF-03).
+* `docker-compose.yml`: Definición del contenedor OCI de PostgreSQL (RNF-04).
+* `.env.example`: Plantilla de variables de entorno requeridas (RNF-06).
+* `prisma.config.ts` y `tsconfig.json`: Configuración de Prisma y del compilador TypeScript.
 
 ---
 
@@ -206,14 +180,15 @@ La especificación detallada de los endpoints se encuentra definida bajo el est�
 
 ### Paso a paso
 
-1. **Clonar el repositorio:**
+1. **Clonar el repositorio e instalar dependencias:**
    ```bash
    git clone <URL_DEL_REPOSITORIO>
    cd 2026-12-TPI
+   npm install
    ```
 
 2. **Configurar las variables de entorno (RNF-06):**
-   Crear un archivo `.env` en la raíz (y en `backend/.env`) copiando el contenido de `.env.example`:
+   Crear un archivo `.env` en la raíz copiando el contenido de `.env.example`:
    ```env
    POSTGRES_USER=m6user
    POSTGRES_PASSWORD=cambiar_esta_clave
@@ -226,21 +201,13 @@ La especificación detallada de los endpoints se encuentra definida bajo el est�
    docker compose up -d
    ```
 
-4. **Instalar dependencias del Backend, generar el cliente de Prisma y aplicar las migraciones:**
+4. **Generar el cliente de Prisma y aplicar las migraciones en la base de datos:**
    ```bash
-   cd backend
-   npm install
    npx prisma generate
    npx prisma migrate dev
    ```
 
-5. **(Opcional) Explorar las tablas y probar el ciclo de vida visualmente:**
-   * **Panel Visual de Persistencia M6 (`http://localhost:3006`):**
-     ```bash
-     npm run explorer
-     ```
-   * **Prisma Studio (`http://localhost:5555`):**
-     ```bash
-     npx prisma studio
-     ```
-
+5. **(Opcional) Explorar las tablas visualmente con Prisma Studio:**
+   ```bash
+   npx prisma studio
+   ```
