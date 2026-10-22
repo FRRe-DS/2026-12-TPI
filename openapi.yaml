@@ -4,6 +4,11 @@ info:
   description: |
     API REST para la gestión de la máquina de estados del viaje, validación de inicio, 
     cierre, cancelaciones y auditoría de transiciones (Grupo 12 - Desarrollo de Software 2026).
+
+    **Catálogo de eventos (RNF-03):** los eventos asíncronos emitidos por M6 se documentan como
+    esquemas en `components/schemas` (`TripCreatedEvent`, `DriverArrivedEvent`, `TripStartedEvent`,
+    `TripCompletedEvent`, `TripCancelledByClientEvent`, `TripCancelledByDriverEvent`), todos basados
+    en `EventEnvelope`.
   version: 1.0.0
 
 servers:
@@ -46,8 +51,10 @@ paths:
       summary: Crear un nuevo viaje tras asignación en despacho (Desde M5)
       description: |
         Inicia el ciclo de vida del viaje en estado `PENDING_ARRIVAL`.
+        Rol requerido: `SYSTEM` (token de servicio de M5 emitido por M1).
         Es idempotente respecto a `requestId`: si el mismo `requestId` llega más de una vez
         con los mismos datos, no se crea otro viaje y se devuelve el ya existente (RNF-08 / RNF-09).
+        Emite evento `TripCreated` hacia M8 y M4 (solo en la creación inicial).
       requestBody:
         required: true
         content:
@@ -71,6 +78,8 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '409':
           description: El `requestId` ya existe pero con datos distintos a los del pedido original
           content:
@@ -81,32 +90,52 @@ paths:
     get:
       tags: [Trips]
       summary: Listar viajes filtrados (Para historial de M2 o consultas de Operador)
-      description: Permite a M2 obtener el historial resumido de un cliente (RF-2.4) o filtrar por conductor/estado.
+      description: |
+        Permite a M2 obtener el historial resumido de un cliente (RF-2.4) o filtrar por conductor/estado.
+        Devuelve `TripSummary` (sin coordenadas, RF-4.7 / RNF-19), paginado y ordenado por `createdAt` descendente.
+        Roles: `CLIENT` (solo con su propio `clientId`), `DRIVER` (solo con su propio `driverId`), `OPERATOR` y `SYSTEM`.
       parameters:
         - in: query
           name: clientId
           schema:
             type: string
+            format: uuid
           description: Filtrar por ID del cliente
         - in: query
           name: driverId
           schema:
             type: string
+            format: uuid
           description: Filtrar por ID del conductor
         - in: query
           name: state
           schema:
             $ref: '#/components/schemas/TripState'
           description: Filtrar por estado actual del viaje
+        - in: query
+          name: page
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+          description: Número de página (base 1)
+        - in: query
+          name: pageSize
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+          description: Cantidad de elementos por página
       responses:
         '200':
-          description: Lista de viajes resumida
+          description: Página de viajes resumidos
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/Trip'
+                $ref: '#/components/schemas/TripSummaryPage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -220,7 +249,7 @@ paths:
       description: |
         Transición: `IN_PROGRESS` -> `COMPLETED`.
         Rol requerido: `DRIVER`. Protegido contra doble finalización concurrente (RNF-08).
-        Emite evento `TripCompleted` hacia M7, M8 y M3/M4.
+        Emite evento `TripCompleted` hacia M7, M8, M4, M2 y M3.
       parameters:
         - $ref: '#/components/parameters/TripIdParam'
       requestBody:
@@ -257,9 +286,10 @@ paths:
       summary: Cancelar un viaje por parte del cliente o conductor (RF-6.6 y RF-6.7)
       description: |
         Transición desde `PENDING_ARRIVAL` o `DRIVER_ARRIVED` hacia:
-        - `CANCELLED_BY_CLIENT` si el rol en el JWT es `CLIENT` (emite `TripCancelledByClient` a M7 y M8).
-        - `CANCELLED_BY_DRIVER` si el rol en el JWT es `DRIVER` (emite `TripCancelledByDriver` a M5 y M8).
-        No se permite cancelar un viaje en estado `IN_PROGRESS` o `COMPLETED`.
+        - `CANCELLED_BY_CLIENT` si el rol en el JWT es `CLIENT` (emite `TripCancelledByClient` a M7, M8 y M4).
+        - `CANCELLED_BY_DRIVER` si el rol en el JWT es `DRIVER` (emite `TripCancelledByDriver` a M5, M8 y M4).
+        No se permite cancelar un viaje en estado `IN_PROGRESS` ni en un estado terminal;
+        los incidentes durante el viaje los gestiona el operador (alcance TP2).
       parameters:
         - $ref: '#/components/parameters/TripIdParam'
       requestBody:
@@ -319,7 +349,10 @@ components:
       type: http
       scheme: bearer
       bearerFormat: JWT
-      description: Token JWT emitido por M1 (Identidad y Acceso) con claims `sub` (userId) y `role` (CLIENT, DRIVER, OPERATOR).
+      description: |
+        Token JWT emitido por M1 (Identidad y Acceso) con claims `sub` (userId o serviceId) y `role`
+        (`CLIENT`, `DRIVER`, `OPERATOR` o `SYSTEM`). El rol `SYSTEM` corresponde a tokens de servicio
+        (client credentials) usados en la comunicación entre módulos, por ejemplo M5 → M6 (RF-1.4).
 
   parameters:
     TripIdParam:
@@ -341,8 +374,6 @@ components:
         - COMPLETED
         - CANCELLED_BY_CLIENT
         - CANCELLED_BY_DRIVER
-
-    
 
     CreateTripRequest:
       type: object
@@ -531,6 +562,234 @@ components:
         timestamp:
           type: string
           format: date-time
+
+    TripSummary:
+      type: object
+      description: Vista resumida de un viaje para historiales (sin coordenadas, RF-2.4 / RF-4.7)
+      properties:
+        id:
+          type: string
+          format: uuid
+        state:
+          $ref: '#/components/schemas/TripState'
+        clientId:
+          type: string
+          format: uuid
+        driverId:
+          type: string
+          format: uuid
+        distanceKm:
+          type: number
+          format: float
+          nullable: true
+        durationMinutes:
+          type: integer
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+
+    TripSummaryPage:
+      type: object
+      required: [items, page, pageSize, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/TripSummary'
+        page:
+          type: integer
+          example: 1
+        pageSize:
+          type: integer
+          example: 20
+        total:
+          type: integer
+          description: Cantidad total de viajes que cumplen el filtro
+          example: 42
+
+    # ------------------------------------------------------------------
+    # Catálogo de eventos asíncronos emitidos por M6 (RNF-03 / RNF-10)
+    # ------------------------------------------------------------------
+    EventEnvelope:
+      type: object
+      description: Sobre común de todos los eventos de dominio publicados por M6.
+      required: [eventId, eventType, eventVersion, occurredAt, tripId]
+      properties:
+        eventId:
+          type: string
+          format: uuid
+          description: Identificador único del evento; los consumidores deduplican por este valor (RNF-09)
+        eventType:
+          type: string
+          enum:
+            - TripCreated
+            - DriverArrived
+            - TripStarted
+            - TripCompleted
+            - TripCancelledByClient
+            - TripCancelledByDriver
+        eventVersion:
+          type: integer
+          minimum: 1
+          example: 1
+        occurredAt:
+          type: string
+          format: date-time
+        tripId:
+          type: string
+          format: uuid
+        correlationId:
+          type: string
+          description: ID de correlación propagado desde la petición original (RNF-14)
+
+    TripCreatedPayload:
+      type: object
+      required: [requestId, clientId, driverId, vehicleId]
+      properties:
+        requestId:
+          type: string
+          format: uuid
+        clientId:
+          type: string
+          format: uuid
+        driverId:
+          type: string
+          format: uuid
+        vehicleId:
+          type: string
+          format: uuid
+
+    TripStatusPayload:
+      type: object
+      description: Datos mínimos para notificar a las partes del viaje.
+      required: [clientId, driverId]
+      properties:
+        clientId:
+          type: string
+          format: uuid
+        driverId:
+          type: string
+          format: uuid
+
+    TripCompletedPayload:
+      type: object
+      required: [clientId, driverId, vehicleId, distanceKm, durationMinutes]
+      properties:
+        clientId:
+          type: string
+          format: uuid
+        driverId:
+          type: string
+          format: uuid
+        vehicleId:
+          type: string
+          format: uuid
+        distanceKm:
+          type: number
+          format: float
+          example: 6.4
+        durationMinutes:
+          type: integer
+          example: 18
+
+    TripCancelledPayload:
+      type: object
+      required: [requestId, clientId, driverId, cancelledBy, reason, previousState, secondsSinceCreation]
+      properties:
+        requestId:
+          type: string
+          format: uuid
+          description: Solicitud original de M5 (permite a M5 re-despachar)
+        clientId:
+          type: string
+          format: uuid
+        driverId:
+          type: string
+          format: uuid
+        cancelledBy:
+          type: string
+          enum: [CLIENT, DRIVER]
+        reason:
+          type: string
+        previousState:
+          $ref: '#/components/schemas/TripState'
+        secondsSinceCreation:
+          type: integer
+          minimum: 0
+          description: Tiempo transcurrido desde la creación del viaje, para el cálculo del cargo de cancelación en M7 (RF-7.4)
+
+    TripCreatedEvent:
+      allOf:
+        - $ref: '#/components/schemas/EventEnvelope'
+        - type: object
+          required: [payload]
+          properties:
+            eventType:
+              type: string
+              enum: [TripCreated]
+            payload:
+              $ref: '#/components/schemas/TripCreatedPayload'
+
+    DriverArrivedEvent:
+      allOf:
+        - $ref: '#/components/schemas/EventEnvelope'
+        - type: object
+          required: [payload]
+          properties:
+            eventType:
+              type: string
+              enum: [DriverArrived]
+            payload:
+              $ref: '#/components/schemas/TripStatusPayload'
+
+    TripStartedEvent:
+      allOf:
+        - $ref: '#/components/schemas/EventEnvelope'
+        - type: object
+          required: [payload]
+          properties:
+            eventType:
+              type: string
+              enum: [TripStarted]
+            payload:
+              $ref: '#/components/schemas/TripStatusPayload'
+
+    TripCompletedEvent:
+      allOf:
+        - $ref: '#/components/schemas/EventEnvelope'
+        - type: object
+          required: [payload]
+          properties:
+            eventType:
+              type: string
+              enum: [TripCompleted]
+            payload:
+              $ref: '#/components/schemas/TripCompletedPayload'
+
+    TripCancelledByClientEvent:
+      allOf:
+        - $ref: '#/components/schemas/EventEnvelope'
+        - type: object
+          required: [payload]
+          properties:
+            eventType:
+              type: string
+              enum: [TripCancelledByClient]
+            payload:
+              $ref: '#/components/schemas/TripCancelledPayload'
+
+    TripCancelledByDriverEvent:
+      allOf:
+        - $ref: '#/components/schemas/EventEnvelope'
+        - type: object
+          required: [payload]
+          properties:
+            eventType:
+              type: string
+              enum: [TripCancelledByDriver]
+            payload:
+              $ref: '#/components/schemas/TripCancelledPayload'
 
   responses:
     BadRequest:
