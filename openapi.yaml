@@ -1,4 +1,4 @@
-openapi: 3.0.3
+openapi: 3.1.0
 info:
   title: Módulo M6 - Viajes y Ciclo de Vida API
   description: |
@@ -510,12 +510,10 @@ components:
         state:
           $ref: '#/components/schemas/TripState'
         distanceKm:
-          type: number
+          type: [number, "null"]
           format: float
-          nullable: true
         durationMinutes:
-          type: integer
-          nullable: true
+          type: [integer, "null"]
         createdAt:
           type: string
           format: date-time
@@ -535,20 +533,17 @@ components:
         state:
           $ref: '#/components/schemas/TripState'
         actorId:
-          type: string
+          type: [string, "null"]
           format: uuid
-          nullable: true
           description: Identificador de quien hizo el cambio. Queda vacío cuando `actorRole` es `SYSTEM`.
           example: "b4f5e9d3-86c2-4a13-9c23-567890abcdef"
         actorRole:
           type: string
           enum: [CLIENT, DRIVER, OPERATOR, SYSTEM]
         reason:
-          type: string
-          nullable: true
+          type: [string, "null"]
         metadata:
-          type: object
-          nullable: true
+          type: [object, "null"]
           additionalProperties: true
           example: { "distanceKm": 6.4, "durationMinutes": 18 }
         createdAt:
@@ -591,12 +586,10 @@ components:
           type: string
           format: uuid
         distanceKm:
-          type: number
+          type: [number, "null"]
           format: float
-          nullable: true
         durationMinutes:
-          type: integer
-          nullable: true
+          type: [integer, "null"]
         createdAt:
           type: string
           format: date-time
