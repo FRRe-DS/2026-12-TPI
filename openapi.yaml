@@ -51,9 +51,12 @@ paths:
       summary: Crear un nuevo viaje tras asignación en despacho (Desde M5)
       description: |
         Inicia el ciclo de vida del viaje en estado `PENDING_ARRIVAL`.
-        Rol requerido: `SYSTEM` (token de servicio de M5 emitido por M1).
+        Rol requerido: `SYSTEM` o `roles: ["SERVICIO"]` (token de servicio de M5 emitido por M1).
         Es idempotente respecto a `requestId`: si el mismo `requestId` llega más de una vez
         con los mismos datos, no se crea otro viaje y se devuelve el ya existente (RNF-08 / RNF-09).
+        Soporta tanto el esquema estándar `CreateTripRequest` (`camelCase`) como el formato alternativo
+        de integración M5 (`solicitud_id`, `cliente_id`, `conductor_id`, `vehiculo_id`, `origen_latitud`,
+        `origen_longitud`, `destino_latitud`, `destino_longitud`).
         Emite evento `TripCreated` hacia M8 y M4 (solo en la creación inicial).
       requestBody:
         required: true
@@ -93,14 +96,19 @@ paths:
       description: |
         Permite a M2 obtener el historial resumido de un cliente (RF-2.4) o filtrar por conductor/estado.
         Devuelve `TripSummary` (sin coordenadas, RF-4.7 / RNF-19), paginado y ordenado por `createdAt` descendente.
-        Roles: `CLIENT` (solo con su propio `clientId`), `DRIVER` (solo con su propio `driverId`), `OPERATOR` y `SYSTEM`.
+        Roles permitidos:
+        - `CLIENT` / `CLIENTE`: devuelve únicamente viajes de su propio `clientId`.
+        - `DRIVER` / `CONDUCTOR`: devuelve únicamente viajes de su propio `driverId`.
+        - `SYSTEM` / `SERVICIO` (ej. M2): **requiere obligatoriamente al menos un filtro** (`clientId`, `driverId` o `state`);
+          una llamada sin filtros devuelve `400 Bad Request` (`code: "FILTER_REQUIRED"`) para evitar exponer viajes de todos los usuarios.
+        - `OPERATOR` / `OPERADOR`: acceso administrativo de consulta.
       parameters:
         - in: query
           name: clientId
           schema:
             type: string
             format: uuid
-          description: Filtrar por ID del cliente
+          description: Filtrar por ID del cliente (obligatorio para consultas de historial desde M2 con rol SYSTEM/SERVICIO)
         - in: query
           name: driverId
           schema:
@@ -145,7 +153,10 @@ paths:
     get:
       tags: [Trips]
       summary: Consultar estado actual y resumen de un viaje (RF-6.2)
-      description: Accesible por el cliente del viaje, el conductor asignado o un operador autorizado.
+      description: |
+        Accesible por el cliente del viaje (`CLIENT`), el conductor asignado (`DRIVER`), un operador (`OPERATOR`)
+        o un módulo de servicio (`SYSTEM` / `roles: ["SERVICIO"]`, por ejemplo M2 al verificar que el viaje esté
+        `COMPLETED`, pertenezca al `clientId` y obtener el `driverId` para calificar al conductor).
       parameters:
         - $ref: '#/components/parameters/TripIdParam'
       responses:
@@ -350,9 +361,10 @@ components:
       scheme: bearer
       bearerFormat: JWT
       description: |
-        Token JWT emitido por M1 (Identidad y Acceso) con claims `sub` (userId o serviceId) y `role`
-        (`CLIENT`, `DRIVER`, `OPERATOR` o `SYSTEM`). El rol `SYSTEM` corresponde a tokens de servicio
-        (client credentials) usados en la comunicación entre módulos, por ejemplo M5 → M6 (RF-1.4).
+        Token JWT emitido por M1 (Identidad y Acceso) con claim `sub` (o `identidad_id`) e información de rol.
+        Soporta tanto `role` string (`CLIENT`, `DRIVER`, `OPERATOR`, `SYSTEM`) como `roles` array
+        (`["CLIENTE"]`, `["CONDUCTOR"]`, `["OPERADOR"]`, `["SERVICIO"]`). El rol `SYSTEM` / `SERVICIO`
+        corresponde a tokens de servicio usados en la comunicación entre módulos (ej. M2 → M6 o M5 → M6, RF-1.4).
 
   parameters:
     TripIdParam:

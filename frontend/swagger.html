@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <title>Módulo M6 — Contrato OpenAPI 3.0 (Swagger UI)</title>
+  <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css" />
+  <style>
+    body { margin: 0; background: #fafafa; font-family: system-ui, sans-serif; }
+    .topbar-m6 {
+      background: #0f172a;
+      color: #f8fafc;
+      padding: 12px 24px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 12px;
+      border-bottom: 2px solid #3b82f6;
+    }
+    .topbar-m6 a {
+      color: #60a5fa;
+      text-decoration: none;
+      font-weight: 600;
+      font-size: 0.9rem;
+    }
+    .token-helper {
+      background: #1e293b;
+      color: #e2e8f0;
+      padding: 10px 24px;
+      font-size: 0.82rem;
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .token-helper button {
+      background: #2563eb;
+      color: white;
+      border: none;
+      padding: 5px 10px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 0.78rem;
+      font-weight: 600;
+    }
+    .token-helper button:hover { background: #1d4ed8; }
+  </style>
+</head>
+<body>
+  <div class="topbar-m6">
+    <div>
+      <strong>📜 Módulo M6 — Especificación Interactiva OpenAPI 3.0 (<code>/api/v1</code>)</strong>
+    </div>
+    <div>
+      <a href="/">&larr; Volver al Panel Visual de Persistencia</a>
+    </div>
+  </div>
+  <div class="token-helper">
+    <span>🔑 <b>Autoconfigurar Token JWT para probar endpoints:</b></span>
+    <button onclick="setRoleToken('SYSTEM')">Usar Rol SYSTEM / SERVICIO</button>
+    <button onclick="setRoleToken('DRIVER')">Usar Rol DRIVER del último viaje</button>
+    <button onclick="setRoleToken('CLIENT')">Usar Rol CLIENT del último viaje</button>
+    <button onclick="setRoleToken('OPERATOR')">Usar Rol OPERATOR</button>
+    <span id="token-status" style="color:#34d399;font-weight:600"></span>
+  </div>
+  <div id="swagger-ui"></div>
+  <script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
+  <script>
+    let ui;
+    window.onload = () => {
+      ui = SwaggerUIBundle({
+        url: '/openapi.yaml',
+        dom_id: '#swagger-ui',
+        deepLinking: true,
+        persistAuthorization: true,
+      });
+    };
+
+    async function setRoleToken(role) {
+      const res = await fetch('/api/demo-tokens');
+      const data = await res.json();
+      const token = data[role];
+      ui.preauthorizeApiKey('bearerAuth', token);
+      document.getElementById('token-status').innerText =
+        '✔ Autenticado como ' + role + (data.lastTripId ? ' (Último tripId: ' + data.lastTripId + ')' : '');
+    }
+  </script>
+</body>
+</html>

@@ -4,6 +4,9 @@
   "description": "",
   "main": "index.js",
   "scripts": {
+    "dev": "tsx src/explorer.ts",
+    "start": "tsx src/explorer.ts",
+    "ui": "tsx src/explorer.ts",
     "explorer": "prisma db push && prisma generate && tsx src/explorer.ts",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
