@@ -1,13 +1,20 @@
-import type { TripState } from "../../generated/prisma/client.js";
+import type { TripState as PrismaTripState } from "../../generated/prisma/client.js";
 import type { AuthContext } from "../middlewares/auth.middleware.js";
 import { ApiError } from "../middlewares/error.middleware.js";
 import type { TripRepository, CreateTripRepoInput } from "../repositories/trip.repository.js";
 import type { EventPublisherService } from "./event-publisher.service.js";
+import {
+  TripStateMachine,
+  TripState,
+  ActorRole,
+  InvalidStateTransitionError,
+  UnauthorizedRoleTransitionError,
+} from "../domain/trip-state-machine.js";
 
 /**
  * CAPA DE LÓGICA DE NEGOCIO (Service Layer)
  * Implementa las reglas de dominio de M6:
- * - Máquina de estados (RF-6.1)
+ * - Máquina de estados (RF-6.1 delegada a TripStateMachine)
  * - Control de acceso basado en roles y propiedad del viaje (RF-6.2 a RF-6.8)
  * - Idempotencia por `requestId` (RNF-08 / RNF-09)
  * - Validación de QR de un solo uso contra M8 (RF-6.4 / RNF-13)
@@ -20,6 +27,32 @@ export class TripService {
     private readonly tripRepository: TripRepository,
     private readonly publisher: EventPublisherService
   ) {}
+
+  /**
+   * Valida una transición de estado y rol utilizando la máquina de estados de dominio (RF-6.1).
+   * Mapea las excepciones de dominio a errores HTTP estándar (ApiError).
+   */
+  private validateStateTransition(
+    currentState: TripState | PrismaTripState | string,
+    targetState: TripState,
+    role: ActorRole | string
+  ): void {
+    try {
+      TripStateMachine.validate({
+        currentState: currentState as TripState,
+        targetState,
+        role: role as ActorRole,
+      });
+    } catch (err) {
+      if (err instanceof UnauthorizedRoleTransitionError) {
+        throw new ApiError(403, "FORBIDDEN_ROLE", err.message);
+      }
+      if (err instanceof InvalidStateTransitionError) {
+        throw new ApiError(409, "INVALID_STATE_TRANSITION", err.message);
+      }
+      throw err;
+    }
+  }
 
   async getHealthStatus() {
     await this.tripRepository.checkDatabaseHealth();
@@ -87,7 +120,7 @@ export class TripService {
     query: {
       clientId?: string;
       driverId?: string;
-      state?: TripState;
+      state?: TripState | PrismaTripState;
       page: number;
       pageSize: number;
     },
@@ -115,7 +148,7 @@ export class TripService {
     return this.tripRepository.findSummariesPaginated({
       clientId: effectiveClientId,
       driverId: effectiveDriverId,
-      state: query.state,
+      state: query.state as PrismaTripState | undefined,
       page: query.page,
       pageSize: query.pageSize,
     });
@@ -149,6 +182,7 @@ export class TripService {
 
   /**
    * RF-6.3: Indicar arribo del conductor al punto de retiro (`PENDING_ARRIVAL` -> `DRIVER_ARRIVED`).
+   * Delega la validación de transición de estado en TripStateMachine.validate(...) (RF-6.1).
    */
   async markDriverArrived(tripId: string, auth: AuthContext, correlationId: string) {
     const trip = await this.tripRepository.findById(tripId);
@@ -164,17 +198,12 @@ export class TripService {
       );
     }
 
-    if (trip.state !== "PENDING_ARRIVAL") {
-      throw new ApiError(
-        409,
-        "INVALID_STATE_TRANSITION",
-        `Transición inválida: no se puede pasar a DRIVER_ARRIVED desde el estado ${trip.state}.`
-      );
-    }
+    // Validación formal mediante la máquina de estados de dominio (RF-6.1)
+    this.validateStateTransition(trip.state, TripState.DRIVER_ARRIVED, auth.role);
 
     const updated = await this.tripRepository.transitionStateAtomic({
       tripId,
-      expectedFromState: "PENDING_ARRIVAL",
+      expectedFromState: trip.state,
       targetState: "DRIVER_ARRIVED",
       actorId: auth.sub,
       actorRole: "DRIVER",
@@ -196,6 +225,7 @@ export class TripService {
 
   /**
    * RF-6.4: Iniciar viaje validando código QR / token de un solo uso con M8 (`DRIVER_ARRIVED` -> `IN_PROGRESS`).
+   * Delega la validación de transición de estado en TripStateMachine.validate(...) (RF-6.1).
    */
   async startTrip(
     tripId: string,
@@ -216,13 +246,8 @@ export class TripService {
       );
     }
 
-    if (trip.state !== "DRIVER_ARRIVED") {
-      throw new ApiError(
-        409,
-        "INVALID_STATE_TRANSITION",
-        `Transición inválida: no se puede pasar a IN_PROGRESS desde el estado ${trip.state}.`
-      );
-    }
+    // Validación formal mediante la máquina de estados de dominio (RF-6.1)
+    this.validateStateTransition(trip.state, TripState.IN_PROGRESS, auth.role);
 
     // Validación contra M8 (RNF-13: 503 si no disponible; RF-6.4: 422 si token inválido/usado/expirado)
     if (verificationToken === "m8_timeout" || verificationToken === "simulate_503") {
@@ -250,7 +275,7 @@ export class TripService {
 
     const updated = await this.tripRepository.transitionStateAtomic({
       tripId,
-      expectedFromState: "DRIVER_ARRIVED",
+      expectedFromState: trip.state,
       targetState: "IN_PROGRESS",
       actorId: auth.sub,
       actorRole: "DRIVER",
@@ -273,6 +298,7 @@ export class TripService {
 
   /**
    * RF-6.5 / RNF-08: Finalizar el viaje registrando métricas de distancia y duración (`IN_PROGRESS` -> `COMPLETED`).
+   * Delega la validación de transición de estado en TripStateMachine.validate(...) (RF-6.1).
    */
   async completeTrip(
     tripId: string,
@@ -293,17 +319,12 @@ export class TripService {
       );
     }
 
-    if (trip.state !== "IN_PROGRESS") {
-      throw new ApiError(
-        409,
-        "INVALID_STATE_TRANSITION",
-        `Transición inválida o intento de doble finalización: el viaje está en estado ${trip.state} (se requiere IN_PROGRESS).`
-      );
-    }
+    // Validación formal mediante la máquina de estados de dominio (RF-6.1)
+    this.validateStateTransition(trip.state, TripState.COMPLETED, auth.role);
 
     const updated = await this.tripRepository.transitionStateAtomic({
       tripId,
-      expectedFromState: "IN_PROGRESS",
+      expectedFromState: trip.state,
       targetState: "COMPLETED",
       actorId: auth.sub,
       actorRole: "DRIVER",
@@ -341,6 +362,7 @@ export class TripService {
 
   /**
    * RF-6.6 y RF-6.7: Cancelar un viaje por parte del cliente o conductor desde `PENDING_ARRIVAL` o `DRIVER_ARRIVED`.
+   * Delega la validación de transición de estado en TripStateMachine.validate(...) (RF-6.1).
    */
   async cancelTrip(tripId: string, reason: string, auth: AuthContext, correlationId: string) {
     const trip = await this.tripRepository.findById(tripId);
@@ -359,17 +381,15 @@ export class TripService {
       );
     }
 
-    if (trip.state !== "PENDING_ARRIVAL" && trip.state !== "DRIVER_ARRIVED") {
-      throw new ApiError(
-        409,
-        "INVALID_STATE_TRANSITION",
-        `El viaje ya no puede ser cancelado en su estado actual (${trip.state}). Solo se permite en PENDING_ARRIVAL o DRIVER_ARRIVED.`
-      );
-    }
+    const targetState: TripState = isClientOwner
+      ? TripState.CANCELLED_BY_CLIENT
+      : TripState.CANCELLED_BY_DRIVER;
+    const cancelledBy = isClientOwner ? "CLIENT" : "DRIVER";
+
+    // Validación formal mediante la máquina de estados de dominio (RF-6.1)
+    this.validateStateTransition(trip.state, targetState, auth.role);
 
     const previousState = trip.state;
-    const targetState: TripState = isClientOwner ? "CANCELLED_BY_CLIENT" : "CANCELLED_BY_DRIVER";
-    const cancelledBy = isClientOwner ? "CLIENT" : "DRIVER";
     const secondsSinceCreation = Math.max(
       0,
       Math.floor((Date.now() - new Date(trip.createdAt).getTime()) / 1000)
