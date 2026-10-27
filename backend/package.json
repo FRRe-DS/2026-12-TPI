@@ -1,12 +1,36 @@
 {
-  "name": "backend",
+  "name": "2026-12-tpi-backend",
   "version": "1.0.0",
   "description": "Modulo M6 Backend - Viajes y Ciclo de Vida",
-  "type": "commonjs",
+  "main": "index.js",
   "scripts": {
+    "dev": "tsx src/explorer.ts",
+    "start": "tsx src/explorer.ts",
+    "ui": "tsx src/explorer.ts",
+    "explorer": "prisma db push && prisma generate && tsx src/explorer.ts",
     "test": "vitest run"
   },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/FRRe-DS/2026-12-tpi.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/FRRe-DS/2026-12-tpi/issues"
+  },
+  "homepage": "https://github.com/FRRe-DS/2026-12-tpi#readme",
+  "dependencies": {
+    "@prisma/client": "^6.19.3"
+  },
   "devDependencies": {
+    "@types/node": "^26.6.5",
+    "dotenv": "^18.0.8",
+    "prisma": "^6.19.3",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3",
     "vitest": "^5.0.5"
   }
 }

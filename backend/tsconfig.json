@@ -2,11 +2,19 @@
   "compilerOptions": {
     "module": "nodenext",
     "target": "esnext",
+    "types": ["node"],
     "sourceMap": true,
     "declaration": true,
+    "declarationMap": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": false,
     "strict": true,
-    "skipLibCheck": true,
-    "moduleDetection": "force"
+    "jsx": "react-jsx",
+    "verbatimModuleSyntax": false,
+    "isolatedModules": true,
+    "noUncheckedSideEffectImports": true,
+    "moduleDetection": "force",
+    "skipLibCheck": true
   },
   "include": ["src/**/*", "tests/**/*"]
 }
