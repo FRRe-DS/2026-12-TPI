@@ -135,6 +135,7 @@ export class TripController {
     const clientIdParam = url.searchParams.get("clientId") ?? undefined;
     const driverIdParam = url.searchParams.get("driverId") ?? undefined;
     const stateParam = url.searchParams.get("state") ?? undefined;
+    const cancelledByParam = url.searchParams.get("cancelledBy") ?? undefined;
     const pageParam = url.searchParams.get("page") ?? "1";
     const pageSizeParam = url.searchParams.get("pageSize") ?? "20";
 
@@ -146,6 +147,9 @@ export class TripController {
     }
     if (stateParam && !VALID_STATES.includes(stateParam as TripState)) {
       throw new ApiError(400, "INVALID_STATE", `El parámetro state debe ser uno de: ${VALID_STATES.join(", ")}.`);
+    }
+    if (cancelledByParam && !["CLIENT", "DRIVER"].includes(cancelledByParam)) {
+      throw new ApiError(400, "INVALID_CANCELLED_BY", "El parámetro cancelledBy debe ser CLIENT o DRIVER.");
     }
 
     const page = Number(pageParam);

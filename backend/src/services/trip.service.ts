@@ -121,6 +121,7 @@ export class TripService {
       clientId?: string;
       driverId?: string;
       state?: TripState | PrismaTripState;
+      cancelledBy?: "CLIENT" | "DRIVER";
       page: number;
       pageSize: number;
     },
@@ -149,6 +150,7 @@ export class TripService {
       clientId: effectiveClientId,
       driverId: effectiveDriverId,
       state: query.state as PrismaTripState | undefined,
+      cancelledBy: query.cancelledBy as "CLIENT" | "DRIVER" | undefined,
       page: query.page,
       pageSize: query.pageSize,
     });

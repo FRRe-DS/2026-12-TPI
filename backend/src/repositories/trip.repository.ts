@@ -15,6 +15,7 @@ export interface ListTripsFilter {
   clientId?: string;
   driverId?: string;
   state?: TripState;
+  cancelledBy?: "CLIENT" | "DRIVER";
   page: number;
   pageSize: number;
 }
@@ -91,6 +92,16 @@ export class TripRepository {
     if (filter.clientId) where.clientId = filter.clientId;
     if (filter.driverId) where.driverId = filter.driverId;
     if (filter.state) where.state = filter.state;
+    if (filter.cancelledBy) {
+      where.events = {
+        some: {
+          actorRole: filter.cancelledBy,
+          state: {
+            in: ["CANCELLED_BY_CLIENT", "CANCELLED_BY_DRIVER"],
+          },
+        },
+      };
+    }
 
     const [total, items] = await Promise.all([
       this.db.trip.count({ where }),

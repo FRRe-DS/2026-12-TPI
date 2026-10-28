@@ -121,6 +121,12 @@ paths:
             $ref: '#/components/schemas/TripState'
           description: Filtrar por estado actual del viaje
         - in: query
+          name: cancelledBy
+          schema:
+            type: string
+            enum: [CLIENT, DRIVER]
+          description: Filtrar los viajes según quién realizó la cancelación
+        - in: query
           name: page
           schema:
             type: integer
