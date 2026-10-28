@@ -1,11 +1,14 @@
 {
-  "name": "2026-12-tpi",
+  "name": "2026-12-tpi-backend",
   "version": "1.0.0",
-  "description": "",
+  "description": "Modulo M6 Backend - Viajes y Ciclo de Vida",
   "main": "index.js",
   "scripts": {
+    "dev": "tsx src/explorer.ts",
+    "start": "tsx src/explorer.ts",
+    "ui": "tsx src/explorer.ts",
     "explorer": "prisma db push && prisma generate && tsx src/explorer.ts",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "vitest run"
   },
   "repository": {
     "type": "git",
@@ -27,6 +30,7 @@
     "dotenv": "^18.0.8",
     "prisma": "^6.19.3",
     "tsx": "^4.23.15",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "vitest": "^5.0.5"
   }
 }
