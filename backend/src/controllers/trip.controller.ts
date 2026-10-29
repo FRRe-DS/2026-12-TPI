@@ -267,25 +267,33 @@ export class TripController {
     }
 
     const body = await parseJsonBody(req);
-    const { distanceKm, durationMinutes } = body;
+    const { distanceKm, finalLatitude, finalLongitude } = body;
 
-    if (
-      typeof distanceKm !== "number" ||
-      distanceKm < 0.1 ||
-      typeof durationMinutes !== "number" ||
-      !Number.isInteger(durationMinutes) ||
-      durationMinutes < 1
-    ) {
+    if (typeof distanceKm !== "number" || !Number.isFinite(distanceKm) || distanceKm < 0.1) {
       throw new ApiError(
         400,
         "INVALID_COMPLETION_METRICS",
-        "Datos inválidos: se requiere distanceKm (>= 0.1) y durationMinutes (entero >= 1)."
+        "Datos inválidos: se requiere distanceKm (número mayor o igual a 0.1)."
       );
+    }
+
+    if (
+      finalLatitude !== undefined &&
+      (typeof finalLatitude !== "number" || finalLatitude < -90 || finalLatitude > 90)
+    ) {
+      throw new ApiError(400, "INVALID_COMPLETION_METRICS", "finalLatitude debe ser un número entre -90 y 90.");
+    }
+
+    if (
+      finalLongitude !== undefined &&
+      (typeof finalLongitude !== "number" || finalLongitude < -180 || finalLongitude > 180)
+    ) {
+      throw new ApiError(400, "INVALID_COMPLETION_METRICS", "finalLongitude debe ser un número entre -180 y 180.");
     }
 
     const updated = await this.tripService.completeTrip(
       tripId,
-      { distanceKm, durationMinutes },
+      { distanceKm, finalLatitude, finalLongitude },
       auth,
       correlationId
     );

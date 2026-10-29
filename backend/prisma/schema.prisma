@@ -63,6 +63,9 @@ model Trip {
   cancelledAt          DateTime?          @map("cancelled_at")
   distanceKm           Float?             @map("distance_km")
   durationMinutes      Int?               @map("duration_minutes")
+  durationSeconds      Int?               @map("duration_seconds")
+  finalLatitude        Float?             @map("final_latitude")
+  finalLongitude       Float?             @map("final_longitude")
   createdAt            DateTime           @default(now()) @map("created_at")
   updatedAt            DateTime           @updatedAt @map("updated_at")
   events               TripEventHistory[]

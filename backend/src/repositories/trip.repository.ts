@@ -32,6 +32,10 @@ export interface TransitionTripRepoInput {
   reason?: string | null;
   distanceKm?: number;
   durationMinutes?: number;
+  durationSeconds?: number;
+  finalLatitude?: number;
+  finalLongitude?: number;
+  completedAt?: Date;
   metadata?: Record<string, unknown>;
 }
 
@@ -133,6 +137,7 @@ export class TripRepository {
    */
     async transitionStateAtomic(input: TransitionTripRepoInput) {
     const now = new Date();
+    const completedAt = input.completedAt ?? now; 
 
     let milestone: {
       arrivedAt?: Date;
@@ -143,7 +148,7 @@ export class TripRepository {
 
     if (input.targetState === "DRIVER_ARRIVED") milestone = { arrivedAt: now };
     else if (input.targetState === "IN_PROGRESS") milestone = { startedAt: now };
-    else if (input.targetState === "COMPLETED") milestone = { completedAt: now };
+    else if (input.targetState === "COMPLETED") milestone = { completedAt };
     else if (input.targetState.startsWith("CANCELLED")) milestone = { cancelledAt: now };
 
     const data = {
@@ -152,6 +157,9 @@ export class TripRepository {
       ...milestone,
       ...(input.distanceKm !== undefined ? { distanceKm: input.distanceKm } : {}),
       ...(input.durationMinutes !== undefined ? { durationMinutes: input.durationMinutes } : {}),
+      ...(input.durationSeconds !== undefined ? { durationSeconds: input.durationSeconds } : {}),
+      ...(input.finalLatitude !== undefined ? { finalLatitude: input.finalLatitude } : {}),
+      ...(input.finalLongitude !== undefined ? { finalLongitude: input.finalLongitude } : {}),
     };
 
     return this.db.$transaction(async (tx) => {

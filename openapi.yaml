@@ -264,6 +264,8 @@ paths:
         Transición: `IN_PROGRESS` -> `COMPLETED`.
         Rol requerido: `DRIVER`. Protegido contra doble finalización concurrente (RNF-08).
         Emite evento `TripCompleted` hacia M7, M8, M4, M2 y M3.
+        La duración la calcula M6 como `completedAt - startedAt` y no se acepta desde el cliente (RF-6.5).
+        Si el viaje no tiene `startedAt` registrado, responde 409 `INVALID_STATE_TRANSITION`.
       parameters:
         - $ref: '#/components/parameters/TripIdParam'
       requestBody:
@@ -473,21 +475,31 @@ components:
           description: Código QR o token efímero de un solo uso generado por M8
           example: "qr_tok_98f7d6a5s4d3"
 
-    CompleteTripRequest:
+      CompleteTripRequest:
       type: object
       required:
         - distanceKm
-        - durationMinutes
       properties:
         distanceKm:
           type: number
           format: float
           minimum: 0.1
+          description: Distancia recorrida informada por el conductor. M6 no mide distancia (RF-6.5).
           example: 6.4
-        durationMinutes:
-          type: integer
-          minimum: 1
-          example: 18
+        finalLatitude:
+          type: number
+          format: double
+          minimum: -90
+          maximum: 90
+          description: Latitud del punto donde terminó el viaje. Opcional.
+          example: -27.45
+        finalLongitude:
+          type: number
+          format: double
+          minimum: -180
+          maximum: 180
+          description: Longitud del punto donde terminó el viaje. Opcional.
+          example: -58.8
 
     CancelTripRequest:
       type: object
