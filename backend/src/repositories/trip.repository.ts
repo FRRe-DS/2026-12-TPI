@@ -131,18 +131,34 @@ export class TripRepository {
    * Aplica una transición de estado en `trips` e inserta una fila inmutable en `trip_event_history`
    * de forma atómica y con control de concurrencia (RNF-08 / RF-6.8).
    */
-  async transitionStateAtomic(input: TransitionTripRepoInput) {
+    async transitionStateAtomic(input: TransitionTripRepoInput) {
+    const now = new Date();
+
+    let milestone: {
+      arrivedAt?: Date;
+      startedAt?: Date;
+      completedAt?: Date;
+      cancelledAt?: Date;
+    } = {};
+
+    if (input.targetState === "DRIVER_ARRIVED") milestone = { arrivedAt: now };
+    else if (input.targetState === "IN_PROGRESS") milestone = { startedAt: now };
+    else if (input.targetState === "COMPLETED") milestone = { completedAt: now };
+    else if (input.targetState.startsWith("CANCELLED")) milestone = { cancelledAt: now };
+
+    const data = {
+      state: input.targetState,
+      version: { increment: 1 },
+      ...milestone,
+      ...(input.distanceKm !== undefined ? { distanceKm: input.distanceKm } : {}),
+      ...(input.durationMinutes !== undefined ? { durationMinutes: input.durationMinutes } : {}),
+    };
+
     return this.db.$transaction(async (tx) => {
       if (input.expectedFromState) {
         const result = await tx.trip.updateMany({
           where: { id: input.tripId, state: input.expectedFromState },
-          data: {
-            state: input.targetState,
-            ...(input.distanceKm !== undefined ? { distanceKm: input.distanceKm } : {}),
-            ...(input.durationMinutes !== undefined
-              ? { durationMinutes: input.durationMinutes }
-              : {}),
-          },
+          data,
         });
 
         if (result.count === 0) {
@@ -151,13 +167,7 @@ export class TripRepository {
       } else {
         await tx.trip.update({
           where: { id: input.tripId },
-          data: {
-            state: input.targetState,
-            ...(input.distanceKm !== undefined ? { distanceKm: input.distanceKm } : {}),
-            ...(input.durationMinutes !== undefined
-              ? { durationMinutes: input.durationMinutes }
-              : {}),
-          },
+          data,
         });
       }
 

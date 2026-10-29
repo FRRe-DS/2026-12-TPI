@@ -532,6 +532,23 @@ components:
           format: double
         state:
           $ref: '#/components/schemas/TripState'
+        version:
+          type: integer
+          minimum: 1
+          description: Sube en 1 con cada transición. También viaja en el header ETag.
+          example: 4
+        arrivedAt:
+          type: [string, "null"]
+          format: date-time
+        startedAt:
+          type: [string, "null"]
+          format: date-time
+        completedAt:
+          type: [string, "null"]
+          format: date-time
+        cancelledAt:
+          type: [string, "null"]
+          format: date-time
         distanceKm:
           type: [number, "null"]
           format: float
