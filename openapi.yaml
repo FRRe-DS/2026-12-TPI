@@ -55,6 +55,9 @@ paths:
         Es idempotente respecto a `requestId`: si el mismo `requestId` llega más de una vez
         con los mismos datos, no se crea otro viaje y se devuelve el ya existente (RNF-08 / RNF-09).
         Emite evento `TripCreated` hacia M8 y M4 (solo en la creación inicial).
+        El `requestId` identifica el **intento de asignación**, no la solicitud de M5: si un viaje
+        se cancela y M5 vuelve a despachar, debe enviar un `requestId` nuevo. El viaje cancelado
+        se conserva en el historial y no se reutiliza.
       requestBody:
         required: true
         content:
@@ -81,7 +84,10 @@ paths:
         '403':
           $ref: '#/components/responses/Forbidden'
         '409':
-          description: El `requestId` ya existe pero con datos distintos a los del pedido original
+          description: | 
+            `requestId` ya existe con datos de creación distintos (código `REQUEST_ID_CONFLICT`).
+            El conflicto se decide comparando todos los campos de creación: clientId, driverId,
+            vehicleId, vehicleType, reservationId, coordenadas y direcciones.
           content:
             application/json:
               schema:
@@ -391,6 +397,7 @@ components:
         - clientId
         - driverId
         - vehicleId
+        - vehicleType
         - originLatitude
         - originLongitude
         - destinationLatitude
@@ -412,6 +419,25 @@ components:
           type: string
           format: uuid
           example: "c5a6f0e4-97d3-4b24-8d34-678901abcdef"
+        vehicleType:
+          type: string
+          enum: [CAR, MOTORCYCLE]
+          description: Tipo de vehículo asignado. M7 lo necesita para calcular la tarifa.
+          example: CAR
+        reservationId:
+          type: [string, "null"]
+          format: uuid
+          description: Reserva de origen (M9), o null si el viaje no viene de una reserva.
+        originAddress:
+          type: [string, "null"]
+          maxLength: 300
+          description: Dirección legible del origen, para mostrarla en el historial.
+          example: "Av. Corrientes 1000"
+        destinationAddress:
+          type: [string, "null"]
+          maxLength: 300
+          description: Dirección legible del destino, para mostrarla en el historial.
+          example: "Av. Santa Fe 3000"
         originLatitude:
           type: number
           format: double
