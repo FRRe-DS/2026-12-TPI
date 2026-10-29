@@ -395,5 +395,5 @@ server.listen(PORT, () => {
   console.log(`\n🚀 Servidor M6 corriendo en:`);
   console.log(`   👉 Panel Visual de Persistencia: http://localhost:${PORT}`);
   console.log(`   👉 Swagger UI (OpenAPI /api/v1): http://localhost:${PORT}/docs`);
-  console.log(`   👉 Health Check:                 http://localhost:${PORT}/api/v1/health\n`);
+  console.log(`   👉 Health Check:                 http://localhost:${PORT}/health\n`);
 });

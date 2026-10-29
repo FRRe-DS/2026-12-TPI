@@ -12,7 +12,7 @@ info:
   version: 1.0.0
 
 servers:
-  - url: http://localhost:3006/api/v1
+
     description: Servidor de desarrollo local (Contenedor OCI)
 
 security:
@@ -54,9 +54,6 @@ paths:
         Rol requerido: `SYSTEM` o `roles: ["SERVICIO"]` (token de servicio de M5 emitido por M1).
         Es idempotente respecto a `requestId`: si el mismo `requestId` llega más de una vez
         con los mismos datos, no se crea otro viaje y se devuelve el ya existente (RNF-08 / RNF-09).
-        Soporta tanto el esquema estándar `CreateTripRequest` (`camelCase`) como el formato alternativo
-        de integración M5 (`solicitud_id`, `cliente_id`, `conductor_id`, `vehiculo_id`, `origen_latitud`,
-        `origen_longitud`, `destino_latitud`, `destino_longitud`).
         Emite evento `TripCreated` hacia M8 y M4 (solo en la creación inicial).
       requestBody:
         required: true

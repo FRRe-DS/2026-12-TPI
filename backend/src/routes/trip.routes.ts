@@ -22,7 +22,12 @@ export async function handleApiV1Router(
   res: http.ServerResponse,
   url: URL
 ): Promise<boolean> {
-  if (!url.pathname.startsWith("/api/v1")) {
+  const isContractPath =
+    url.pathname === "/health" ||
+    url.pathname === "/trips" ||
+    url.pathname.startsWith("/trips/");
+
+  if (!isContractPath) {
     return false;
   }
 
@@ -39,7 +44,7 @@ export async function handleApiV1Router(
 
   const correlationId =
     (req.headers["x-correlation-id"] as string | undefined) || crypto.randomUUID();
-  const subPath = url.pathname.slice("/api/v1".length) || "/";
+  const subPath = url.pathname;
 
   try {
     // 1. GET /api/v1/health (Público, sin requerir JWT)
