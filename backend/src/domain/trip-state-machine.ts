@@ -10,8 +10,7 @@ export enum TripState {
   DRIVER_ARRIVED = 'DRIVER_ARRIVED',
   IN_PROGRESS = 'IN_PROGRESS',
   COMPLETED = 'COMPLETED',
-  CANCELLED_BY_CLIENT = 'CANCELLED_BY_CLIENT',
-  CANCELLED_BY_DRIVER = 'CANCELLED_BY_DRIVER',
+  CANCELLED = 'CANCELLED',
 }
 
 export type TripStateType = `${TripState}`;
@@ -47,15 +46,9 @@ export const VALID_TRANSITIONS: readonly StateTransitionRule[] = [
   },
   {
     from: TripState.PENDING_ARRIVAL,
-    to: TripState.CANCELLED_BY_CLIENT,
-    allowedRoles: [ActorRole.CLIENT],
-    description: 'El cliente cancela el viaje antes del arribo del conductor (RF-6.6)',
-  },
-  {
-    from: TripState.PENDING_ARRIVAL,
-    to: TripState.CANCELLED_BY_DRIVER,
-    allowedRoles: [ActorRole.DRIVER],
-    description: 'El conductor cancela el viaje antes de llegar (RF-6.7)',
+    to: TripState.CANCELLED,
+    allowedRoles: [ActorRole.CLIENT, ActorRole.DRIVER],
+    description: 'El cliente o el conductor cancela antes del arribo (RF-6.6 / RF-6.7)',
   },
   {
     from: TripState.DRIVER_ARRIVED,
@@ -63,23 +56,26 @@ export const VALID_TRANSITIONS: readonly StateTransitionRule[] = [
     allowedRoles: [ActorRole.DRIVER],
     description: 'El conductor inicia el viaje tras validar QR / token en M8 (RF-6.4)',
   },
+
   {
     from: TripState.DRIVER_ARRIVED,
-    to: TripState.CANCELLED_BY_CLIENT,
-    allowedRoles: [ActorRole.CLIENT],
-    description: 'El cliente cancela el viaje mientras el conductor espera (RF-6.6)',
+    to: TripState.CANCELLED,
+    allowedRoles: [ActorRole.CLIENT, ActorRole.DRIVER],
+    description: 'El cliente o el conductor cancela mientras el conductor espera (RF-6.6 / RF-6.7)',
   },
-  {
-    from: TripState.DRIVER_ARRIVED,
-    to: TripState.CANCELLED_BY_DRIVER,
-    allowedRoles: [ActorRole.DRIVER],
-    description: 'El conductor cancela el viaje tras esperar en el punto (RF-6.7)',
-  },
+
   {
     from: TripState.IN_PROGRESS,
     to: TripState.COMPLETED,
     allowedRoles: [ActorRole.DRIVER],
     description: 'El conductor finaliza el viaje registrando métricas de distancia y tiempo (RF-6.5)',
+  },
+
+  {
+    from: TripState.IN_PROGRESS,
+    to: TripState.CANCELLED,
+    allowedRoles: [ActorRole.CLIENT, ActorRole.DRIVER],
+    description: 'Cancelación durante el viaje: el cliente se baja o el conductor no puede continuar (RF-6.6 / RF-6.7)',
   },
 ] as const;
 
@@ -88,8 +84,7 @@ export const VALID_TRANSITIONS: readonly StateTransitionRule[] = [
  */
 export const TERMINAL_STATES: readonly TripState[] = [
   TripState.COMPLETED,
-  TripState.CANCELLED_BY_CLIENT,
-  TripState.CANCELLED_BY_DRIVER,
+  TripState.CANCELLED,
 ] as const;
 
 /**

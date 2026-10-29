@@ -157,6 +157,8 @@ Todos los eventos comparten el sobre `EventEnvelope` (`eventId`, `eventType`, `e
 | Transición e inserción en `TripEventHistory` dentro de la misma transacción. | El historial nunca queda desfasado del estado vigente (RF-6.8). |
 | Autenticación servicio a servicio con rol `SYSTEM`. | M5 invoca `POST /trips` con un token de servicio emitido por M1 (RF-1.4); los usuarios finales no pueden crear viajes. |
 | El historial para M2 expone `TripSummary` sin coordenadas. | Minimiza la exposición de ubicaciones (RF-4.7 / RNF-19). |
+|**Cancelación de un viaje en curso (RF-6.6 / RF-6.7):** se permite cancelar desde `PENDING_ARRIVAL`, `DRIVER_ARRIVED` e `IN_PROGRESS`, únicamente por el cliente titular o el conductor asignado.| El operador no cancela viajes en TP1: su gestión de incidentes queda para TP2.|
+|**Un solo estado de cancelación:** `CANCELLED` + campo `cancelledBy` (`CLIENT`, `DRIVER`), en lugar de un estado por rol.|Se eligió porque el estado describe la situación del viaje y el actor se registra aparte, sin duplicar la máquina de estados.|
 
 ---
 

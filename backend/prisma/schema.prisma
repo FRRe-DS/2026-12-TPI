@@ -19,8 +19,7 @@ enum TripState {
   DRIVER_ARRIVED
   IN_PROGRESS
   COMPLETED
-  CANCELLED_BY_CLIENT
-  CANCELLED_BY_DRIVER
+  CANCELLED
 
   @@map("trip_state")
 }
@@ -61,6 +60,7 @@ model Trip {
   startedAt            DateTime?          @map("started_at")
   completedAt          DateTime?          @map("completed_at")
   cancelledAt          DateTime?          @map("cancelled_at")
+  cancelledBy          ActorRole?         @map("cancelled_by")
   distanceKm           Float?             @map("distance_km")
   durationMinutes      Int?               @map("duration_minutes")
   durationSeconds      Int?               @map("duration_seconds")

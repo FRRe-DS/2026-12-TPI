@@ -382,9 +382,11 @@ export class TripService {
     return updated;
   }
 
-  /**
-   * RF-6.6 y RF-6.7: Cancelar un viaje por parte del cliente o conductor desde `PENDING_ARRIVAL` o `DRIVER_ARRIVED`.
-   * Delega la validación de transición de estado en TripStateMachine.validate(...) (RF-6.1).
+    /**
+   * RF-6.6 y RF-6.7: Cancelar un viaje por parte del cliente o conductor desde
+   * `PENDING_ARRIVAL`, `DRIVER_ARRIVED` o `IN_PROGRESS` (RF-6.1).
+   * El estado destino es siempre `CANCELLED`: quién canceló se guarda en `cancelledBy`
+   * y en el historial (RF-6.8).
    */
   async cancelTrip(tripId: string, reason: string, auth: AuthContext, correlationId: string) {
     const trip = await this.tripRepository.findById(tripId);
@@ -403,9 +405,7 @@ export class TripService {
       );
     }
 
-    const targetState: TripState = isClientOwner
-      ? TripState.CANCELLED_BY_CLIENT
-      : TripState.CANCELLED_BY_DRIVER;
+    const targetState: TripState = TripState.CANCELLED;
     const cancelledBy = isClientOwner ? "CLIENT" : "DRIVER";
 
     // Validación formal mediante la máquina de estados de dominio (RF-6.1)
@@ -423,8 +423,9 @@ export class TripService {
       targetState,
       actorId: auth.sub,
       actorRole: cancelledBy,
+      cancelledBy,
       reason,
-      metadata: { previousState, secondsSinceCreation },
+      metadata: { previousState, secondsSinceCreation, cancelledBy },
     });
 
     if (!updated) {

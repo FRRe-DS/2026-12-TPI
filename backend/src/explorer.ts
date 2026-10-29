@@ -12,12 +12,11 @@ import { createDemoJwt } from "./middlewares/auth.middleware.js";
 const PORT = 3006;
 
 const VALID_TRANSITIONS: Record<TripState, TripState[]> = {
-  PENDING_ARRIVAL: ["DRIVER_ARRIVED", "CANCELLED_BY_CLIENT", "CANCELLED_BY_DRIVER"],
-  DRIVER_ARRIVED: ["IN_PROGRESS", "CANCELLED_BY_CLIENT", "CANCELLED_BY_DRIVER"],
-  IN_PROGRESS: ["COMPLETED"],
+  PENDING_ARRIVAL: ["DRIVER_ARRIVED", "CANCELLED"],
+  DRIVER_ARRIVED: ["IN_PROGRESS", "CANCELLED"],
+  IN_PROGRESS: ["COMPLETED", "CANCELLED"],
   COMPLETED: [],
-  CANCELLED_BY_CLIENT: [],
-  CANCELLED_BY_DRIVER: [],
+  CANCELLED: [],
 };
 
 async function parseBody(req: http.IncomingMessage): Promise<any> {
@@ -196,7 +195,8 @@ const server = http.createServer(async (req: http.IncomingMessage, res: http.Ser
             originLongitude: -58.9831,
             destinationLatitude: -27.4712,
             destinationLongitude: -58.9915,
-            state: "CANCELLED_BY_CLIENT",
+            state: "CANCELLED",
+            cancelledBy: "CLIENT",
           },
         });
         await tx.tripEventHistory.createMany({
@@ -209,7 +209,7 @@ const server = http.createServer(async (req: http.IncomingMessage, res: http.Ser
             },
             {
               tripId: t3.id,
-              state: "CANCELLED_BY_CLIENT",
+              state: "CANCELLED",
               actorId: client3,
               actorRole: "CLIENT",
               reason: "Demora excesiva del conductor asignado",
@@ -308,10 +308,14 @@ const server = http.createServer(async (req: http.IncomingMessage, res: http.Ser
         });
       }
 
-      const actorRole: ActorRole =
-        targetState === "CANCELLED_BY_CLIENT" ? "CLIENT" : "DRIVER";
-      const actorId =
-        targetState === "CANCELLED_BY_CLIENT" ? trip.clientId : trip.driverId;
+      const cancelledBy: ActorRole = body.cancelledBy === "DRIVER" ? "DRIVER" : "CLIENT";
+
+      let actorRole: ActorRole = "DRIVER";
+      let actorId: string = trip.driverId;
+      if (targetState === "CANCELLED") {
+        actorRole = cancelledBy;
+        actorId = cancelledBy === "CLIENT" ? trip.clientId : trip.driverId;
+      }
 
       const previousState = trip.state;
       const updated = await prisma.$transaction(async (tx) => {
@@ -319,6 +323,7 @@ const server = http.createServer(async (req: http.IncomingMessage, res: http.Ser
           where: { id: tripId },
           data: {
             state: targetState,
+            ...(targetState === "CANCELLED" ? { cancelledBy } : {}),
             ...(targetState === "COMPLETED"
               ? {
                   distanceKm: Number(distanceKm ?? 3.4),
@@ -359,19 +364,19 @@ const server = http.createServer(async (req: http.IncomingMessage, res: http.Ser
           distanceKm: updated.distanceKm ?? 3.4,
           durationMinutes: updated.durationMinutes ?? 12,
         });
-      } else if (targetState === "CANCELLED_BY_CLIENT" || targetState === "CANCELLED_BY_DRIVER") {
+      } else if (targetState === "CANCELLED") {
         const secondsSinceCreation = Math.max(
           0,
           Math.floor((Date.now() - new Date(trip.createdAt).getTime()) / 1000)
         );
         eventPublisher.publish(
-          targetState === "CANCELLED_BY_CLIENT" ? "TripCancelledByClient" : "TripCancelledByDriver",
+          cancelledBy === "CLIENT" ? "TripCancelledByClient" : "TripCancelledByDriver",
           tripId,
           {
             requestId: trip.requestId,
             clientId: trip.clientId,
             driverId: trip.driverId,
-            cancelledBy: targetState === "CANCELLED_BY_CLIENT" ? "CLIENT" : "DRIVER",
+            cancelledBy,
             reason: reason || "Sin motivo",
             previousState,
             secondsSinceCreation,

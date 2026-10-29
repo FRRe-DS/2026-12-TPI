@@ -10,8 +10,7 @@ const VALID_STATES: TripState[] = [
   "DRIVER_ARRIVED",
   "IN_PROGRESS",
   "COMPLETED",
-  "CANCELLED_BY_CLIENT",
-  "CANCELLED_BY_DRIVER",
+  "CANCELLED",
 ];
 
 function isValidUuid(value: unknown): value is string {

@@ -301,11 +301,14 @@ paths:
       tags: [Trips]
       summary: Cancelar un viaje por parte del cliente o conductor (RF-6.6 y RF-6.7)
       description: |
-        Transición desde `PENDING_ARRIVAL` o `DRIVER_ARRIVED` hacia:
-        - `CANCELLED_BY_CLIENT` si el rol en el JWT es `CLIENT` (emite `TripCancelledByClient` a M7, M8 y M4).
-        - `CANCELLED_BY_DRIVER` si el rol en el JWT es `DRIVER` (emite `TripCancelledByDriver` a M5, M8 y M4).
-        No se permite cancelar un viaje en estado `IN_PROGRESS` ni en un estado terminal;
-        los incidentes durante el viaje los gestiona el operador (alcance TP2).
+        Transición desde `PENDING_ARRIVAL`, `DRIVER_ARRIVED` o `IN_PROGRESS` hacia `CANCELLED`.
+        El rol que ejecuta la cancelación se registra en `cancelledBy` (`CLIENT` o `DRIVER`)
+        y queda también en el historial (RF-6.8).
+        - Si cancela el `CLIENT`, se emite `TripCancelledByClient` hacia M7, M8 y M4.
+        - Si cancela el `DRIVER`, se emite `TripCancelledByDriver` hacia M5, M8 y M4.
+        No se permite cancelar un viaje en estado terminal (`COMPLETED` o `CANCELLED`):
+        un ajuste posterior a la finalización es un reintegro de M7 (RF-7.5), no una cancelación.
+        La cancelación por operador no está habilitada en TP1 (gestión de incidentes, TP2).
       parameters:
         - $ref: '#/components/parameters/TripIdParam'
       requestBody:
@@ -384,13 +387,15 @@ components:
   schemas:
     TripState:
       type: string
+      description: |
+        Estados del ciclo de vida del viaje (RF-6.1).
+        `CANCELLED` es terminal: quién canceló se registra en el campo `cancelledBy`.
       enum:
         - PENDING_ARRIVAL
         - DRIVER_ARRIVED
         - IN_PROGRESS
         - COMPLETED
-        - CANCELLED_BY_CLIENT
-        - CANCELLED_BY_DRIVER
+        - CANCELLED
 
     CreateTripRequest:
       type: object
@@ -475,7 +480,7 @@ components:
           description: Código QR o token efímero de un solo uso generado por M8
           example: "qr_tok_98f7d6a5s4d3"
 
-      CompleteTripRequest:
+    CompleteTripRequest:
       type: object
       required:
         - distanceKm
@@ -561,6 +566,13 @@ components:
         cancelledAt:
           type: [string, "null"]
           format: date-time
+        cancelledBy:
+          type: [string, "null"]
+          enum: [CLIENT, DRIVER, OPERATOR,null]
+          description: |
+            Rol que ejecutó la cancelación. No indica quién la pidió: si un operador
+            cancela a pedido del cliente, vale `OPERATOR` y el pedido queda en `reason`.
+          example: "CLIENT"         
         distanceKm:
           type: [number, "null"]
           format: float

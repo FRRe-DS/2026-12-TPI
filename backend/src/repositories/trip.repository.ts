@@ -36,6 +36,7 @@ export interface TransitionTripRepoInput {
   finalLatitude?: number;
   finalLongitude?: number;
   completedAt?: Date;
+  cancelledBy?: ActorRole;
   metadata?: Record<string, unknown>;
 }
 
@@ -158,6 +159,7 @@ export class TripRepository {
       ...(input.distanceKm !== undefined ? { distanceKm: input.distanceKm } : {}),
       ...(input.durationMinutes !== undefined ? { durationMinutes: input.durationMinutes } : {}),
       ...(input.durationSeconds !== undefined ? { durationSeconds: input.durationSeconds } : {}),
+      ...(input.cancelledBy !== undefined ? { cancelledBy: input.cancelledBy } : {}),
       ...(input.finalLatitude !== undefined ? { finalLatitude: input.finalLatitude } : {}),
       ...(input.finalLongitude !== undefined ? { finalLongitude: input.finalLongitude } : {}),
     };
