@@ -80,6 +80,10 @@ export class TripService {
         existing.clientId === input.clientId &&
         existing.driverId === input.driverId &&
         existing.vehicleId === input.vehicleId &&
+        existing.vehicleType === input.vehicleType &&
+        existing.reservationId === (input.reservationId ?? null) &&
+        existing.originAddress === (input.originAddress ?? null) &&
+        existing.destinationAddress === (input.destinationAddress ?? null) &&
         existing.originLatitude === input.originLatitude &&
         existing.originLongitude === input.originLongitude &&
         existing.destinationLatitude === input.destinationLatitude &&
@@ -91,7 +95,7 @@ export class TripService {
 
       throw new ApiError(
         409,
-        "CONFLICT_REQUEST_ID",
+        "REQUEST_ID_CONFLICT",
         "El requestId ya existe pero con datos distintos a los del pedido original."
       );
     }

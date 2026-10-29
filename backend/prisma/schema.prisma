@@ -25,6 +25,13 @@ enum TripState {
   @@map("trip_state")
 }
 
+enum VehicleType {
+  CAR
+  MOTORCYCLE
+
+  @@map("vehicle_type")
+}
+
 enum ActorRole {
   CLIENT
   DRIVER
@@ -40,6 +47,10 @@ model Trip {
   clientId             String             @map("client_id") @db.Uuid
   driverId             String             @map("driver_id") @db.Uuid
   vehicleId            String             @map("vehicle_id") @db.Uuid
+  vehicleType          VehicleType        @map("vehicle_type")
+  reservationId        String?            @map("reservation_id") @db.Uuid
+  originAddress        String?            @map("origin_address")
+  destinationAddress   String?            @map("destination_address")
   originLatitude       Float              @map("origin_latitude")
   originLongitude      Float              @map("origin_longitude")
   destinationLatitude  Float              @map("destination_latitude")

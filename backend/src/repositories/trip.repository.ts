@@ -1,10 +1,14 @@
-import { PrismaClient, TripState, ActorRole } from "../../generated/prisma/client.js";
+import { PrismaClient, TripState, ActorRole, VehicleType} from "../../generated/prisma/client.js";
 
 export interface CreateTripRepoInput {
   requestId: string;
   clientId: string;
   driverId: string;
   vehicleId: string;
+  vehicleType: VehicleType;
+  reservationId?: string | null;
+  originAddress?: string | null;
+  destinationAddress?: string | null;
   originLatitude: number;
   originLongitude: number;
   destinationLatitude: number;
@@ -62,6 +66,10 @@ export class TripRepository {
           clientId: input.clientId,
           driverId: input.driverId,
           vehicleId: input.vehicleId,
+          vehicleType: input.vehicleType,
+          reservationId: input.reservationId ?? null,
+          originAddress: input.originAddress ?? null,
+          destinationAddress: input.destinationAddress ?? null,
           originLatitude: input.originLatitude,
           originLongitude: input.originLongitude,
           destinationLatitude: input.destinationLatitude,

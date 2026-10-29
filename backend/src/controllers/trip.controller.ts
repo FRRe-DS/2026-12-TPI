@@ -64,6 +64,10 @@ export class TripController {
     const originLongitude = body?.originLongitude ?? body?.origen_longitud;
     const destinationLatitude = body?.destinationLatitude ?? body?.destino_latitud;
     const destinationLongitude = body?.destinationLongitude ?? body?.destino_longitud;
+    const vehicleType = body?.vehicleType;
+    const reservationId = body?.reservationId ?? null;
+    const originAddress = body?.originAddress ?? null;
+    const destinationAddress = body?.destinationAddress ?? null;
 
     if (
       !isValidUuid(requestId) ||
@@ -99,12 +103,32 @@ export class TripController {
       );
     }
 
+    if (vehicleType !== "CAR" && vehicleType !== "MOTORCYCLE") {
+      throw new ApiError(400, "VALIDATION", "El campo vehicleType es obligatorio y debe ser CAR o MOTORCYCLE.");
+    }
+
+    if (reservationId !== null && !isValidUuid(reservationId)) {
+      throw new ApiError(400, "VALIDATION", "reservationId debe ser un UUID válido o null.");
+    }
+
+    if (originAddress !== null && (typeof originAddress !== "string" || originAddress.length > 300)) {
+      throw new ApiError(400, "VALIDATION", "originAddress debe ser texto de hasta 300 caracteres o null.");
+    }
+
+    if (destinationAddress !== null && (typeof destinationAddress !== "string" || destinationAddress.length > 300)) {
+      throw new ApiError(400, "VALIDATION", "destinationAddress debe ser texto de hasta 300 caracteres o null.");
+    }
+
     const result = await this.tripService.createTrip(
       {
         requestId,
         clientId,
         driverId,
         vehicleId,
+        vehicleType,
+        reservationId,
+        originAddress,
+        destinationAddress,
         originLatitude,
         originLongitude,
         destinationLatitude,
