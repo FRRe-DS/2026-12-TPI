@@ -209,6 +209,7 @@
             <th>ID Viaje (PK)</th>
             <th>Request ID (M5 @unique)</th>
             <th>Estado Actual</th>
+            <th>v</th>
             <th>Cliente / Conductor / Vehículo</th>
             <th>Origen &rarr; Destino (Lat, Lng)</th>
             <th>Métricas</th>
@@ -291,7 +292,7 @@
 
       const tbody = document.getElementById('trips-body');
       if (trips.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="7" class="empty">No hay viajes en la base de datos. Hacé clic en <b>"✨ Cargar 3 Viajes de Prueba"</b> arriba a la derecha.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="8" class="empty">No hay viajes en la base de datos. Hacé clic en <b>"✨ Cargar 3 Viajes de Prueba"</b> arriba a la derecha.</td></tr>';
       } else {
         tbody.innerHTML = trips.map(t => {
           let btns = '';
@@ -321,6 +322,7 @@
             <td><span class="mono" title="${t.id}">${shortUuid(t.id)}</span></td>
             <td><span class="mono" title="${t.requestId}">${shortUuid(t.requestId)}</span></td>
             <td><span class="state-badge st-${t.state}">${t.state}</span></td>
+            <td><span class="mono" title="Sube 1 en cada transición (RNF-08)">${t.version}</span></td>
             <td style="font-size:0.78rem;color:var(--muted)">
               👤 C: <span class="mono" title="${t.clientId}">${shortUuid(t.clientId)}</span><br/>
               🛞 D: <span class="mono" title="${t.driverId}">${shortUuid(t.driverId)}</span>

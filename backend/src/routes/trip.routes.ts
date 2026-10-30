@@ -1,17 +1,8 @@
 import http from "node:http";
 import crypto from "node:crypto";
-import { prisma } from "../config/database.js";
 import { authenticateMiddleware } from "../middlewares/auth.middleware.js";
 import { ApiError, handleErrorMiddleware } from "../middlewares/error.middleware.js";
-import { TripRepository } from "../repositories/trip.repository.js";
-import { eventPublisher } from "../services/event-publisher.service.js";
-import { TripService } from "../services/trip.service.js";
-import { TripController } from "../controllers/trip.controller.js";
-
-// Inyección de dependencias (Wiring de las capas: Repository -> Service -> Controller)
-const tripRepository = new TripRepository(prisma);
-const tripService = new TripService(tripRepository, eventPublisher);
-const tripController = new TripController(tripService);
+import { tripController } from "../config/services.js";
 
 /**
  * CAPA DE ENRUTAMIENTO (Router Layer)
