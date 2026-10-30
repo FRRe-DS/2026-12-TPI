@@ -9,7 +9,8 @@ import { handleApiV1Router } from "./routes/trip.routes.js";
 import { eventPublisher } from "./services/event-publisher.service.js";
 import { createDemoJwt } from "./middlewares/auth.middleware.js";
 
-const PORT = 3006;
+// RNF-06: el puerto se configura por variable de entorno, con 3006 como valor por defecto.
+const PORT = Number(process.env.PORT ?? 3006);
 
 async function parseBody(req: http.IncomingMessage): Promise<any> {
   return new Promise((resolve, reject) => {

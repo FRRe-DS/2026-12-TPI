@@ -18,6 +18,22 @@ function isValidUuid(value: unknown): value is string {
   return typeof value === "string" && UUID_REGEX.test(value);
 }
 
+/**
+ * ETag fuerte basado en la versión del viaje: cambia en cada transición (RNF-08).
+ * HTTP exige que el valor vaya entre comillas.
+ */
+function etagForVersion(version: number): string {
+  return `"${version}"`;
+}
+
+/** `If-None-Match` puede traer varios ETags separados por coma, o `*`. */
+function etagMatches(headerValue: string, etag: string): boolean {
+  return headerValue
+    .split(",")
+    .map((v) => v.trim())
+    .some((v) => v === "*" || v === etag || v === `W/${etag}`);
+}
+
 async function parseJsonBody(req: http.IncomingMessage): Promise<any> {
   return new Promise((resolve, reject) => {
     let data = "";
@@ -147,7 +163,9 @@ export class TripController {
         }
       : toTripResponse(result.trip);
 
-    sendJsonResponse(res, result.statusCode, responseBody, correlationId);
+    sendJsonResponse(res, result.statusCode, responseBody, correlationId, {
+      ETag: etagForVersion(result.trip.version),
+    });
   }
 
   async listTrips(
@@ -198,6 +216,7 @@ export class TripController {
 
   async getTripById(
     tripId: string,
+    req: http.IncomingMessage,
     res: http.ServerResponse,
     auth: AuthContext,
     correlationId: string
@@ -207,7 +226,20 @@ export class TripController {
     }
 
     const trip = await this.tripService.getTripById(tripId, auth);
-    sendJsonResponse(res, 200, toTripResponse(trip), correlationId);
+    const etag = etagForVersion(trip.version);
+    const ifNoneMatch = req.headers["if-none-match"];
+
+    // GET condicional (RFC 9110): si el cliente ya tiene esta versión, no se le manda el cuerpo.
+    if (typeof ifNoneMatch === "string" && etagMatches(ifNoneMatch, etag)) {
+      res.writeHead(304, {
+        ETag: etag,
+        ...(correlationId ? { "X-Correlation-Id": correlationId } : {}),
+      });
+      res.end();
+      return;
+    }
+
+    sendJsonResponse(res, 200, toTripResponse(trip), correlationId, { ETag: etag });
   }
 
   async markDriverArrived(
@@ -221,7 +253,9 @@ export class TripController {
     }
 
     const updated = await this.tripService.markDriverArrived(tripId, auth, correlationId);
-    sendJsonResponse(res, 200, toTripResponse(updated), correlationId);
+    sendJsonResponse(res, 200, toTripResponse(updated), correlationId, {
+      ETag: etagForVersion(updated.version),
+    });
   }
 
   async startTrip(
@@ -252,7 +286,9 @@ export class TripController {
       auth,
       correlationId
     );
-    sendJsonResponse(res, 200, toTripResponse(updated), correlationId);
+    sendJsonResponse(res, 200, toTripResponse(updated), correlationId, {
+      ETag: etagForVersion(updated.version),
+    });
   }
 
   async completeTrip(
@@ -297,7 +333,9 @@ export class TripController {
       auth,
       correlationId
     );
-    sendJsonResponse(res, 200, toTripResponse(updated), correlationId);
+    sendJsonResponse(res, 200, toTripResponse(updated), correlationId, {
+      ETag: etagForVersion(updated.version),
+    });
   }
 
   async cancelTrip(
@@ -323,7 +361,9 @@ export class TripController {
     }
 
     const updated = await this.tripService.cancelTrip(tripId, reason, auth, correlationId);
-    sendJsonResponse(res, 200, toTripResponse(updated), correlationId);
+    sendJsonResponse(res, 200, toTripResponse(updated), correlationId, {
+      ETag: etagForVersion(updated.version),
+    });
   }
 
   async getTripHistory(

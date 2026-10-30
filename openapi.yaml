@@ -67,12 +67,18 @@ paths:
       responses:
         '201':
           description: Viaje creado exitosamente (por primera vez) en estado PENDING_ARRIVAL
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/Trip'
         '200':
           description: Ya existía un viaje para ese `requestId`; se devuelve el mismo viaje sin crear otro
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
           content:
             application/json:
               schema:
@@ -162,13 +168,19 @@ paths:
         `COMPLETED`, pertenezca al `clientId` y obtener el `driverId` para calificar al conductor).
       parameters:
         - $ref: '#/components/parameters/TripIdParam'
+        - $ref: '#/components/parameters/IfNoneMatchParam'
       responses:
         '200':
           description: Detalle y estado actual del viaje
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/Trip'
+        '304':
+          $ref: '#/components/responses/NotModified'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -189,6 +201,9 @@ paths:
       responses:
         '200':
           description: Arribo registrado correctamente
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
           content:
             application/json:
               schema:
@@ -225,6 +240,9 @@ paths:
       responses:
         '200':
           description: QR validado e inicio de viaje registrado
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
           content:
             application/json:
               schema:
@@ -277,6 +295,9 @@ paths:
       responses:
         '200':
           description: Viaje finalizado exitosamente
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
           content:
             application/json:
               schema:
@@ -320,6 +341,9 @@ paths:
       responses:
         '200':
           description: Viaje cancelado exitosamente
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
           content:
             application/json:
               schema:
@@ -383,6 +407,25 @@ components:
       schema:
         type: string
         format: uuid
+    IfNoneMatchParam:
+      name: If-None-Match
+      in: header
+      required: false
+      description: |
+        ETag que el cliente ya tiene. Si coincide con la versión actual del viaje,
+        la respuesta es `304 Not Modified` sin cuerpo (GET condicional, RFC 9110).
+      schema:
+        type: string
+        example: '"4"'
+
+  headers:
+    ETag:
+      description: |
+        Versión del viaje entre comillas (`"4"`). Cambia con cada transición (RNF-08):
+        sirve para que el cliente sepa si su copia está al día sin comparar el cuerpo.
+      schema:
+        type: string
+        example: '"4"'
 
   schemas:
     TripState:
@@ -862,6 +905,13 @@ components:
               $ref: '#/components/schemas/TripCancelledPayload'
 
   responses:
+    NotModified:
+      description: |
+        El viaje no cambió desde la versión que el cliente ya tiene (`If-None-Match` coincide).
+        No lleva cuerpo.
+      headers:
+        ETag:
+          $ref: '#/components/headers/ETag'
     BadRequest:
       description: Datos de entrada inválidos o faltantes
       content:
