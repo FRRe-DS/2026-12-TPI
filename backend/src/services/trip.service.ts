@@ -373,8 +373,8 @@ export class TripService {
         distanceKm: metrics.distanceKm,
         durationSeconds,
         durationMinutes,
-        startedAt: trip.startedAt,
-        completedAt,
+        startedAt: trip.startedAt.toISOString(),
+        completedAt: completedAt.toISOString(),
       },
       correlationId
     );
