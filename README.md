@@ -117,14 +117,16 @@ La especificación detallada de los endpoints se encuentra definida bajo el est�
 
 | Método | Ruta | Rol / Origen | Acción / Transición |
 | :--- | :--- | :--- | :--- |
-| `POST` | `/trips` | **M5 (Despacho)** / `SYSTEM` | Crea el viaje inicial en estado `PENDING_ARRIVAL` (idempotente por `requestId`). |
+| `POST` | `/trips` | **M5 (Despacho)** / `SYSTEM` | Crea el viaje inicial en estado `PENDING_ARRIVAL` (idempotente por `requestId`). Responde `201` la primera vez y `200` si el `requestId` ya existía. |
 | `GET` | `/trips?clientId={id}&page=&pageSize=` | **M2 (Clientes)** / `CLIENT` / `OPERATOR` | Historial resumido y paginado (`TripSummary`, sin coordenadas) del cliente (RF-2.4 / RF-4.7). |
-| `GET` | `/trips/{id}` | `CLIENT`, `DRIVER`, `OPERATOR` | Consulta el estado actual y resumen del viaje (RF-6.2). |
+| `GET` | `/trips/{id}` | `CLIENT`, `DRIVER`, `OPERATOR` | Consulta el estado actual y resumen del viaje (RF-6.2). Devuelve `ETag` y admite `If-None-Match` → `304`. |
 | `POST` | `/trips/{id}/arrived` | `DRIVER` | Registra arribo en punto de retiro (`DRIVER_ARRIVED` - RF-6.3). |
 | `POST` | `/trips/{id}/start` | `DRIVER` (Valida con **M8**) | Valida QR de un solo uso e inicia viaje (`IN_PROGRESS` - RF-6.4). |
-| `POST` | `/trips/{id}/complete` | `DRIVER` | Cierra el viaje con km y tiempo (`COMPLETED` - RF-6.5). |
-| `POST` | `/trips/{id}/cancel` | `CLIENT` / `DRIVER` | Cancela el viaje registrando el motivo obligatorio (RF-6.6 / RF-6.7). |
+| `POST` | `/trips/{id}/complete` | `DRIVER` | Cierra el viaje con la distancia informada; M6 calcula la duración desde `startedAt` (`COMPLETED` - RF-6.5). |
+| `POST` | `/trips/{id}/cancel` | `CLIENT` / `DRIVER` | Cancela el viaje registrando el motivo obligatorio (`CANCELLED` + `cancelledBy`) desde `PENDING_ARRIVAL`, `DRIVER_ARRIVED` o `IN_PROGRESS` (RF-6.6 / RF-6.7). |
 | `GET` | `/trips/{id}/history` | `OPERATOR` | Consulta el registro de auditoría de transiciones (RF-6.8). |
+
+**Versionado y concurrencia (RNF-08):** cada respuesta que devuelve un viaje incluye la cabecera `ETag` con el campo `version` entre comillas (por ejemplo `ETag: "4"`). El cliente puede repetir el `GET` con `If-None-Match: "4"` y recibir `304 Not Modified` sin cuerpo si nada cambió. La `version` sube de uno en uno con cada transición, y las escrituras se aplican con `UPDATE ... WHERE id = ? AND state = <estado esperado>`, de modo que ante dos pedidos simultáneos solo uno gana y el otro recibe `409`.
 
 ### Salidas Asíncronas (Catálogo de Eventos de Dominio - RNF-03)
 *(En próximas iteraciones se publicarán mediante RabbitMQ según RNF-10. Hoy se publican en el bus en memoria de `event-publisher.service.ts`, que conserva los últimos 100 y los expone en el panel de demo.)*
@@ -223,6 +225,15 @@ Se envían `durationSeconds` **y** `durationMinutes` para que nadie tenga que re
 | El historial para M2 expone `TripSummary` sin coordenadas. | Minimiza la exposición de ubicaciones (RF-4.7 / RNF-19). |
 |**Cancelación de un viaje en curso (RF-6.6 / RF-6.7):** se permite cancelar desde `PENDING_ARRIVAL`, `DRIVER_ARRIVED` e `IN_PROGRESS`, únicamente por el cliente titular o el conductor asignado.| El operador no cancela viajes en TP1: su gestión de incidentes queda para TP2.|
 |**Un solo estado de cancelación:** `CANCELLED` + campo `cancelledBy` (`CLIENT`, `DRIVER`), en lugar de un estado por rol.|Se eligió porque el estado describe la situación del viaje y el actor se registra aparte, sin duplicar la máquina de estados.|
+
+### Pendientes conocidos (deuda técnica)
+
+| Tema | Estado | Impacto |
+| :--- | :--- | :--- |
+| Verificación de la firma del JWT | Hoy se decodifica el token y se leen `sub` y `role`, pero **no se valida la firma**: un token fabricado con rol `SYSTEM` sería aceptado | Depende de M1 (clave pública / JWKS). Es el pendiente más importante antes de un entorno real (RF-1.4 / RNF-06) |
+| `If-Match` en escrituras | No implementado. La concurrencia se controla con estado + `version` en la base | El contrato no lo exige; se puede agregar sin cambiar el modelo (RNF-08) |
+| Tests de endpoints | Solo hay tests unitarios de la máquina de estados (11, `npm test`) | La lógica de dominio está cubierta; los endpoints se verifican con el panel de demo |
+| Bus de eventos | En memoria (`event-publisher.service.ts`), guarda los últimos 100 | Se pierde al reiniciar el servidor; queda para la iteración con RabbitMQ (RNF-10) |
 
 ---
 

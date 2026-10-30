@@ -48,8 +48,8 @@ export async function handleApiV1Router(
     // Middleware de Autenticación JWT (M1)
     const auth = authenticateMiddleware(req);
 
-    // 2. POST /api/v1/trips (y alias /api/v1/viajes para compatibilidad con propuesta M5)
-    if (req.method === "POST" && (subPath === "/trips" || subPath === "/viajes")) {
+    // 2. POST /trips
+    if (req.method === "POST" && subPath === "/trips") {
       await tripController.createTrip(req, res, auth, correlationId);
       return true;
     }
