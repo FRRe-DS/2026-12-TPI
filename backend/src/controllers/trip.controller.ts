@@ -3,6 +3,7 @@ import type { TripState } from "../../generated/prisma/client.js";
 import type { AuthContext } from "../middlewares/auth.middleware.js";
 import { ApiError, sendJsonResponse } from "../middlewares/error.middleware.js";
 import type { TripService } from "../services/trip.service.js";
+import { toTripResponse } from "../mappers/trip.mapper.js";
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const VALID_STATES: TripState[] = [
@@ -144,7 +145,7 @@ export class TripController {
           solicitud_id: result.trip.requestId,
           estado: "CREADO",
         }
-      : result.trip;
+      : toTripResponse(result.trip);
 
     sendJsonResponse(res, result.statusCode, responseBody, correlationId);
   }
@@ -206,7 +207,7 @@ export class TripController {
     }
 
     const trip = await this.tripService.getTripById(tripId, auth);
-    sendJsonResponse(res, 200, trip, correlationId);
+    sendJsonResponse(res, 200, toTripResponse(trip), correlationId);
   }
 
   async markDriverArrived(
@@ -220,7 +221,7 @@ export class TripController {
     }
 
     const updated = await this.tripService.markDriverArrived(tripId, auth, correlationId);
-    sendJsonResponse(res, 200, updated, correlationId);
+    sendJsonResponse(res, 200, toTripResponse(updated), correlationId);
   }
 
   async startTrip(
@@ -251,7 +252,7 @@ export class TripController {
       auth,
       correlationId
     );
-    sendJsonResponse(res, 200, updated, correlationId);
+    sendJsonResponse(res, 200, toTripResponse(updated), correlationId);
   }
 
   async completeTrip(
@@ -296,7 +297,7 @@ export class TripController {
       auth,
       correlationId
     );
-    sendJsonResponse(res, 200, updated, correlationId);
+    sendJsonResponse(res, 200, toTripResponse(updated), correlationId);
   }
 
   async cancelTrip(
@@ -322,7 +323,7 @@ export class TripController {
     }
 
     const updated = await this.tripService.cancelTrip(tripId, reason, auth, correlationId);
-    sendJsonResponse(res, 200, updated, correlationId);
+    sendJsonResponse(res, 200, toTripResponse(updated), correlationId);
   }
 
   async getTripHistory(

@@ -397,6 +397,13 @@ components:
         - COMPLETED
         - CANCELLED
 
+    VehicleType:
+      type: string
+      description: Tipo de vehículo asignado por M5. M7 lo usa para calcular la tarifa (RF-7.1).
+      enum:
+        - CAR
+        - MOTORCYCLE
+
     CreateTripRequest:
       type: object
       required:
@@ -427,10 +434,7 @@ components:
           format: uuid
           example: "c5a6f0e4-97d3-4b24-8d34-678901abcdef"
         vehicleType:
-          type: string
-          enum: [CAR, MOTORCYCLE]
-          description: Tipo de vehículo asignado. M7 lo necesita para calcular la tarifa.
-          example: CAR
+          $ref: '#/components/schemas/VehicleType'
         reservationId:
           type: [string, "null"]
           format: uuid
@@ -535,6 +539,20 @@ components:
         vehicleId:
           type: string
           format: uuid
+        vehicleType:
+          $ref: '#/components/schemas/VehicleType'
+        reservationId:
+          type: [string, "null"]
+          format: uuid
+          description: Reserva de origen (M9), o null si el viaje no viene de una reserva.
+        originAddress:
+          type: [string, "null"]
+          maxLength: 300
+          description: Dirección legible del origen, para mostrarla en el historial.
+        destinationAddress:
+          type: [string, "null"]
+          maxLength: 300
+          description: Dirección legible del destino, para mostrarla en el historial.
         originLatitude:
           type: number
           format: double
@@ -578,6 +596,17 @@ components:
           format: float
         durationMinutes:
           type: [integer, "null"]
+        durationSeconds:
+          type: [integer, "null"]
+          description: Duración exacta calculada por M6 (RF-6.5). Es el valor que consume M7.
+        finalLatitude:
+          type: [number, "null"]
+          format: double
+          description: Latitud del punto de cierre informado por el conductor. Opcional.
+        finalLongitude:
+          type: [number, "null"]
+          format: double
+          description: Longitud del punto de cierre informado por el conductor. Opcional.
         createdAt:
           type: string
           format: date-time
