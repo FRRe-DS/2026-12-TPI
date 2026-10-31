@@ -17,17 +17,22 @@ export function sendJsonResponse(
   res: http.ServerResponse,
   status: number,
   payload: unknown,
-  correlationId?: string
+  correlationId?: string,
+  extraHeaders?: Record<string, string>
 ): void {
   const headers: Record<string, string> = {
     "Content-Type": "application/json; charset=utf-8",
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
     "Access-Control-Allow-Headers":
-      "Content-Type, Authorization, X-Correlation-Id, X-Actor-Role, X-Actor-Id",
+      "Content-Type, Authorization, X-Correlation-Id, X-Actor-Role, X-Actor-Id, If-None-Match, If-Match",
+    "Access-Control-Expose-Headers": "ETag, X-Correlation-Id",
   };
   if (correlationId) {
     headers["X-Correlation-Id"] = correlationId;
+  }
+  if (extraHeaders) {
+    Object.assign(headers, extraHeaders);
   }
   res.writeHead(status, headers);
   res.end(JSON.stringify(payload));

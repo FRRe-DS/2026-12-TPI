@@ -36,7 +36,10 @@ export interface TripCompletedPayload {
   driverId: string;
   vehicleId: string;
   distanceKm: number;
+  durationSeconds: number;
   durationMinutes: number;
+  startedAt: string;
+  completedAt: string;
 }
 
 export interface TripCancelledPayload {

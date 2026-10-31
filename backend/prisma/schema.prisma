@@ -19,10 +19,16 @@ enum TripState {
   DRIVER_ARRIVED
   IN_PROGRESS
   COMPLETED
-  CANCELLED_BY_CLIENT
-  CANCELLED_BY_DRIVER
+  CANCELLED
 
   @@map("trip_state")
+}
+
+enum VehicleType {
+  CAR
+  MOTORCYCLE
+
+  @@map("vehicle_type")
 }
 
 enum ActorRole {
@@ -40,13 +46,26 @@ model Trip {
   clientId             String             @map("client_id") @db.Uuid
   driverId             String             @map("driver_id") @db.Uuid
   vehicleId            String             @map("vehicle_id") @db.Uuid
+  vehicleType          VehicleType        @map("vehicle_type")
+  reservationId        String?            @map("reservation_id") @db.Uuid
+  originAddress        String?            @map("origin_address")
+  destinationAddress   String?            @map("destination_address")
   originLatitude       Float              @map("origin_latitude")
   originLongitude      Float              @map("origin_longitude")
   destinationLatitude  Float              @map("destination_latitude")
   destinationLongitude Float              @map("destination_longitude")
   state                TripState          @default(PENDING_ARRIVAL)
+  version              Int                @default(1)
+  arrivedAt            DateTime?          @map("arrived_at")
+  startedAt            DateTime?          @map("started_at")
+  completedAt          DateTime?          @map("completed_at")
+  cancelledAt          DateTime?          @map("cancelled_at")
+  cancelledBy          ActorRole?         @map("cancelled_by")
   distanceKm           Float?             @map("distance_km")
   durationMinutes      Int?               @map("duration_minutes")
+  durationSeconds      Int?               @map("duration_seconds")
+  finalLatitude        Float?             @map("final_latitude")
+  finalLongitude       Float?             @map("final_longitude")
   createdAt            DateTime           @default(now()) @map("created_at")
   updatedAt            DateTime           @updatedAt @map("updated_at")
   events               TripEventHistory[]

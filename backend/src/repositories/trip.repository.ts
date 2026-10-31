@@ -1,10 +1,14 @@
-import { PrismaClient, TripState, ActorRole } from "../../generated/prisma/client.js";
+import { PrismaClient, TripState, ActorRole, VehicleType} from "../../generated/prisma/client.js";
 
 export interface CreateTripRepoInput {
   requestId: string;
   clientId: string;
   driverId: string;
   vehicleId: string;
+  vehicleType: VehicleType;
+  reservationId?: string | null;
+  originAddress?: string | null;
+  destinationAddress?: string | null;
   originLatitude: number;
   originLongitude: number;
   destinationLatitude: number;
@@ -28,6 +32,11 @@ export interface TransitionTripRepoInput {
   reason?: string | null;
   distanceKm?: number;
   durationMinutes?: number;
+  durationSeconds?: number;
+  finalLatitude?: number;
+  finalLongitude?: number;
+  completedAt?: Date;
+  cancelledBy?: ActorRole;
   metadata?: Record<string, unknown>;
 }
 
@@ -62,6 +71,10 @@ export class TripRepository {
           clientId: input.clientId,
           driverId: input.driverId,
           vehicleId: input.vehicleId,
+          vehicleType: input.vehicleType,
+          reservationId: input.reservationId ?? null,
+          originAddress: input.originAddress ?? null,
+          destinationAddress: input.destinationAddress ?? null,
           originLatitude: input.originLatitude,
           originLongitude: input.originLongitude,
           destinationLatitude: input.destinationLatitude,
@@ -123,18 +136,39 @@ export class TripRepository {
    * Aplica una transición de estado en `trips` e inserta una fila inmutable en `trip_event_history`
    * de forma atómica y con control de concurrencia (RNF-08 / RF-6.8).
    */
-  async transitionStateAtomic(input: TransitionTripRepoInput) {
+    async transitionStateAtomic(input: TransitionTripRepoInput) {
+    const now = new Date();
+    const completedAt = input.completedAt ?? now; 
+
+    let milestone: {
+      arrivedAt?: Date;
+      startedAt?: Date;
+      completedAt?: Date;
+      cancelledAt?: Date;
+    } = {};
+
+    if (input.targetState === "DRIVER_ARRIVED") milestone = { arrivedAt: now };
+    else if (input.targetState === "IN_PROGRESS") milestone = { startedAt: now };
+    else if (input.targetState === "COMPLETED") milestone = { completedAt };
+    else if (input.targetState.startsWith("CANCELLED")) milestone = { cancelledAt: now };
+
+    const data = {
+      state: input.targetState,
+      version: { increment: 1 },
+      ...milestone,
+      ...(input.distanceKm !== undefined ? { distanceKm: input.distanceKm } : {}),
+      ...(input.durationMinutes !== undefined ? { durationMinutes: input.durationMinutes } : {}),
+      ...(input.durationSeconds !== undefined ? { durationSeconds: input.durationSeconds } : {}),
+      ...(input.cancelledBy !== undefined ? { cancelledBy: input.cancelledBy } : {}),
+      ...(input.finalLatitude !== undefined ? { finalLatitude: input.finalLatitude } : {}),
+      ...(input.finalLongitude !== undefined ? { finalLongitude: input.finalLongitude } : {}),
+    };
+
     return this.db.$transaction(async (tx) => {
       if (input.expectedFromState) {
         const result = await tx.trip.updateMany({
           where: { id: input.tripId, state: input.expectedFromState },
-          data: {
-            state: input.targetState,
-            ...(input.distanceKm !== undefined ? { distanceKm: input.distanceKm } : {}),
-            ...(input.durationMinutes !== undefined
-              ? { durationMinutes: input.durationMinutes }
-              : {}),
-          },
+          data,
         });
 
         if (result.count === 0) {
@@ -143,13 +177,7 @@ export class TripRepository {
       } else {
         await tx.trip.update({
           where: { id: input.tripId },
-          data: {
-            state: input.targetState,
-            ...(input.distanceKm !== undefined ? { distanceKm: input.distanceKm } : {}),
-            ...(input.durationMinutes !== undefined
-              ? { durationMinutes: input.durationMinutes }
-              : {}),
-          },
+          data,
         });
       }
 

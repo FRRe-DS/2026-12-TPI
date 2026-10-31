@@ -3,22 +3,14 @@ import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
-import { TripState, ActorRole } from "../generated/prisma/client.js";
 import { prisma } from "./config/database.js";
+import { tripService } from "./config/services.js";
 import { handleApiV1Router } from "./routes/trip.routes.js";
 import { eventPublisher } from "./services/event-publisher.service.js";
 import { createDemoJwt } from "./middlewares/auth.middleware.js";
 
-const PORT = 3006;
-
-const VALID_TRANSITIONS: Record<TripState, TripState[]> = {
-  PENDING_ARRIVAL: ["DRIVER_ARRIVED", "CANCELLED_BY_CLIENT", "CANCELLED_BY_DRIVER"],
-  DRIVER_ARRIVED: ["IN_PROGRESS", "CANCELLED_BY_CLIENT", "CANCELLED_BY_DRIVER"],
-  IN_PROGRESS: ["COMPLETED"],
-  COMPLETED: [],
-  CANCELLED_BY_CLIENT: [],
-  CANCELLED_BY_DRIVER: [],
-};
+// RNF-06: el puerto se configura por variable de entorno, con 3006 como valor por defecto.
+const PORT = Number(process.env.PORT ?? 3006);
 
 async function parseBody(req: http.IncomingMessage): Promise<any> {
   return new Promise((resolve, reject) => {
@@ -114,6 +106,7 @@ const server = http.createServer(async (req: http.IncomingMessage, res: http.Ser
             clientId: client1,
             driverId: driver1,
             vehicleId: vehicle1,
+            vehicleType: "CAR",
             originLatitude: -27.4514,
             originLongitude: -58.9792,
             destinationLatitude: -27.4512,
@@ -160,6 +153,7 @@ const server = http.createServer(async (req: http.IncomingMessage, res: http.Ser
             clientId: "c2222222-2222-4222-8222-222222222222",
             driverId: "d2222222-2222-4222-8222-222222222222",
             vehicleId: "a2222222-2222-4222-8222-222222222222",
+            vehicleType: "CAR",
             originLatitude: -27.4411,
             originLongitude: -58.9652,
             destinationLatitude: -27.4321,
@@ -189,11 +183,13 @@ const server = http.createServer(async (req: http.IncomingMessage, res: http.Ser
             clientId: client3,
             driverId: "d3333333-3333-4333-8333-333333333333",
             vehicleId: "a3333333-3333-4333-8333-333333333333",
+            vehicleType: "CAR",
             originLatitude: -27.4605,
             originLongitude: -58.9831,
             destinationLatitude: -27.4712,
             destinationLongitude: -58.9915,
-            state: "CANCELLED_BY_CLIENT",
+            state: "CANCELLED",
+            cancelledBy: "CLIENT",
           },
         });
         await tx.tripEventHistory.createMany({
@@ -206,7 +202,7 @@ const server = http.createServer(async (req: http.IncomingMessage, res: http.Ser
             },
             {
               tripId: t3.id,
-              state: "CANCELLED_BY_CLIENT",
+              state: "CANCELLED",
               actorId: client3,
               actorRole: "CLIENT",
               reason: "Demora excesiva del conductor asignado",
@@ -261,6 +257,7 @@ const server = http.createServer(async (req: http.IncomingMessage, res: http.Ser
             clientId,
             driverId,
             vehicleId,
+            vehicleType: "CAR",
             originLatitude,
             originLongitude,
             destinationLatitude,
@@ -291,90 +288,69 @@ const server = http.createServer(async (req: http.IncomingMessage, res: http.Ser
 
     if (req.method === "POST" && url.pathname === "/api/transition") {
       const body = await parseBody(req);
-      const { tripId, targetState, reason, distanceKm, durationMinutes } = body;
+      const { tripId, targetState, reason, distanceKm } = body;
+
+      if (typeof tripId !== "string" || typeof targetState !== "string") {
+        return sendJson(res, 400, {
+          error: "INVALID_TRANSITION",
+          message: "Se requieren tripId y targetState.",
+        });
+      }
 
       const trip = await prisma.trip.findUnique({ where: { id: tripId } });
       if (!trip) return sendJson(res, 404, { error: "Viaje no encontrado" });
 
-      const allowed = VALID_TRANSITIONS[trip.state] || [];
-      if (!allowed.includes(targetState)) {
-        return sendJson(res, 409, {
-          error: "INVALID_STATE_TRANSITION",
-          message: `Transición inválida: No se puede pasar de ${trip.state} a ${targetState} (RF-6.1).`,
-        });
-      }
+      // El panel delega en el service: así cumple las mismas reglas que la API
+      // (RF-6.1, RF-6.8, RNF-08) y emite los mismos eventos (RNF-03).
+      const correlationId = crypto.randomUUID();
+      const driverAuth = { sub: trip.driverId, role: "DRIVER" as const };
 
-      const actorRole: ActorRole =
-        targetState === "CANCELLED_BY_CLIENT" ? "CLIENT" : "DRIVER";
-      const actorId =
-        targetState === "CANCELLED_BY_CLIENT" ? trip.clientId : trip.driverId;
-
-      const previousState = trip.state;
-      const updated = await prisma.$transaction(async (tx) => {
-        const u = await tx.trip.update({
-          where: { id: tripId },
-          data: {
-            state: targetState,
-            ...(targetState === "COMPLETED"
-              ? {
-                  distanceKm: Number(distanceKm ?? 3.4),
-                  durationMinutes: Number(durationMinutes ?? 12),
-                }
-              : {}),
-          },
-        });
-
-        await tx.tripEventHistory.create({
-          data: {
+      try {
+        if (targetState === "DRIVER_ARRIVED") {
+          await tripService.markDriverArrived(tripId, driverAuth, correlationId);
+        } else if (targetState === "IN_PROGRESS") {
+          // Token distinto en cada intento: el service los trata como de un solo uso (RF-6.4).
+          await tripService.startTrip(
             tripId,
-            state: targetState,
-            actorId,
-            actorRole,
-            reason: reason || null,
-            metadata:
-              targetState === "COMPLETED"
-                ? { distanceKm: u.distanceKm, durationMinutes: u.durationMinutes }
-                : targetState === "IN_PROGRESS"
-                ? { qrValidatedWithM8: true }
-                : undefined,
-          },
+            `panel-${crypto.randomUUID()}`,
+            driverAuth,
+            correlationId
+          );
+        } else if (targetState === "COMPLETED") {
+          await tripService.completeTrip(
+            tripId,
+            { distanceKm: Number(distanceKm ?? 3.4) },
+            driverAuth,
+            correlationId
+          );
+        } else if (targetState === "CANCELLED") {
+          const cancelledBy = body.cancelledBy === "DRIVER" ? "DRIVER" : "CLIENT";
+          await tripService.cancelTrip(
+            tripId,
+            typeof reason === "string" && reason.trim()
+              ? reason.trim()
+              : "Cancelado desde el panel",
+            {
+              sub: cancelledBy === "CLIENT" ? trip.clientId : trip.driverId,
+              role: cancelledBy,
+            },
+            correlationId
+          );
+        } else {
+          return sendJson(res, 400, {
+            error: "INVALID_TRANSITION",
+            message: `El panel no puede llevar un viaje a ${targetState}.`,
+          });
+        }
+      } catch (err: any) {
+        const status = typeof err?.statusCode === "number" ? err.statusCode : 500;
+        return sendJson(res, status, {
+          error: err?.code ?? "ERROR",
+          message: err?.message ?? "Error interno.",
         });
-
-        return u;
-      });
-
-      if (targetState === "DRIVER_ARRIVED") {
-        eventPublisher.publish("DriverArrived", tripId, { clientId: trip.clientId, driverId: trip.driverId });
-      } else if (targetState === "IN_PROGRESS") {
-        eventPublisher.publish("TripStarted", tripId, { clientId: trip.clientId, driverId: trip.driverId });
-      } else if (targetState === "COMPLETED") {
-        eventPublisher.publish("TripCompleted", tripId, {
-          clientId: trip.clientId,
-          driverId: trip.driverId,
-          vehicleId: trip.vehicleId,
-          distanceKm: updated.distanceKm ?? 3.4,
-          durationMinutes: updated.durationMinutes ?? 12,
-        });
-      } else if (targetState === "CANCELLED_BY_CLIENT" || targetState === "CANCELLED_BY_DRIVER") {
-        const secondsSinceCreation = Math.max(
-          0,
-          Math.floor((Date.now() - new Date(trip.createdAt).getTime()) / 1000)
-        );
-        eventPublisher.publish(
-          targetState === "CANCELLED_BY_CLIENT" ? "TripCancelledByClient" : "TripCancelledByDriver",
-          tripId,
-          {
-            requestId: trip.requestId,
-            clientId: trip.clientId,
-            driverId: trip.driverId,
-            cancelledBy: targetState === "CANCELLED_BY_CLIENT" ? "CLIENT" : "DRIVER",
-            reason: reason || "Sin motivo",
-            previousState,
-            secondsSinceCreation,
-          }
-        );
       }
 
+      const updated = await prisma.trip.findUnique({ where: { id: tripId } });
       return sendJson(res, 200, { trip: updated });
     }
 
@@ -395,5 +371,5 @@ server.listen(PORT, () => {
   console.log(`\n🚀 Servidor M6 corriendo en:`);
   console.log(`   👉 Panel Visual de Persistencia: http://localhost:${PORT}`);
   console.log(`   👉 Swagger UI (OpenAPI /api/v1): http://localhost:${PORT}/docs`);
-  console.log(`   👉 Health Check:                 http://localhost:${PORT}/api/v1/health\n`);
+  console.log(`   👉 Health Check:                 http://localhost:${PORT}/health\n`);
 });

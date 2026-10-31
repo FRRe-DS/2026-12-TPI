@@ -117,19 +117,39 @@ La especificación detallada de los endpoints se encuentra definida bajo el est�
 
 | Método | Ruta | Rol / Origen | Acción / Transición |
 | :--- | :--- | :--- | :--- |
-| `POST` | `/trips` | **M5 (Despacho)** / `SYSTEM` | Crea el viaje inicial en estado `PENDING_ARRIVAL` (idempotente por `requestId`). |
+| `POST` | `/trips` | **M5 (Despacho)** / `SYSTEM` | Crea el viaje inicial en estado `PENDING_ARRIVAL` (idempotente por `requestId`). Responde `201` la primera vez y `200` si el `requestId` ya existía. |
 | `GET` | `/trips?clientId={id}&page=&pageSize=` | **M2 (Clientes)** / `CLIENT` / `OPERATOR` | Historial resumido y paginado (`TripSummary`, sin coordenadas) del cliente (RF-2.4 / RF-4.7). |
-| `GET` | `/trips/{id}` | `CLIENT`, `DRIVER`, `OPERATOR` | Consulta el estado actual y resumen del viaje (RF-6.2). |
+| `GET` | `/trips/{id}` | `CLIENT`, `DRIVER`, `OPERATOR` | Consulta el estado actual y resumen del viaje (RF-6.2). Devuelve `ETag` y admite `If-None-Match` → `304`. |
 | `POST` | `/trips/{id}/arrived` | `DRIVER` | Registra arribo en punto de retiro (`DRIVER_ARRIVED` - RF-6.3). |
 | `POST` | `/trips/{id}/start` | `DRIVER` (Valida con **M8**) | Valida QR de un solo uso e inicia viaje (`IN_PROGRESS` - RF-6.4). |
-| `POST` | `/trips/{id}/complete` | `DRIVER` | Cierra el viaje con km y tiempo (`COMPLETED` - RF-6.5). |
-| `POST` | `/trips/{id}/cancel` | `CLIENT` / `DRIVER` | Cancela el viaje registrando el motivo obligatorio (RF-6.6 / RF-6.7). |
+| `POST` | `/trips/{id}/complete` | `DRIVER` | Cierra el viaje con la distancia informada; M6 calcula la duración desde `startedAt` (`COMPLETED` - RF-6.5). |
+| `POST` | `/trips/{id}/cancel` | `CLIENT` / `DRIVER` | Cancela el viaje registrando el motivo obligatorio (`CANCELLED` + `cancelledBy`) desde `PENDING_ARRIVAL`, `DRIVER_ARRIVED` o `IN_PROGRESS` (RF-6.6 / RF-6.7). |
 | `GET` | `/trips/{id}/history` | `OPERATOR` | Consulta el registro de auditoría de transiciones (RF-6.8). |
 
-### Salidas Asíncronas (Catálogo de Eventos de Dominio - RNF-03)
-*(En próximas iteraciones se publicarán mediante RabbitMQ según RNF-10.)*
+**Versionado y concurrencia (RNF-08):** cada respuesta que devuelve un viaje incluye la cabecera `ETag` con el campo `version` entre comillas (por ejemplo `ETag: "4"`). El cliente puede repetir el `GET` con `If-None-Match: "4"` y recibir `304 Not Modified` sin cuerpo si nada cambió. La `version` sube de uno en uno con cada transición, y las escrituras se aplican con `UPDATE ... WHERE id = ? AND state = <estado esperado>`, de modo que ante dos pedidos simultáneos solo uno gana y el otro recibe `409`.
 
-Todos los eventos comparten el sobre `EventEnvelope` (`eventId`, `eventType`, `eventVersion`, `occurredAt`, `tripId`, `correlationId`) y un `payload` específico. Los esquemas completos están en `openapi.yaml` → `components/schemas`. Los consumidores deben deduplicar por `eventId` (RNF-09).
+### Salidas Asíncronas (Catálogo de Eventos de Dominio - RNF-03)
+*(En próximas iteraciones se publicarán mediante RabbitMQ según RNF-10. Hoy se publican en el bus en memoria de `event-publisher.service.ts`, que conserva los últimos 100 y los expone en el panel de demo.)*
+
+Los eventos se nombran **en pasado** y describen algo que ya ocurrió. Llevan datos suficientes para que quien los reciba **no tenga que volver a preguntar** (RNF-03). Los esquemas completos están en `openapi.yaml` → `components/schemas`.
+
+Dos reglas para los consumidores:
+- **Deduplicar por `eventId`** (RNF-09): el mismo evento puede entregarse dos veces.
+- **Ignorar los campos que no conozcan**: M6 puede agregar datos nuevos sin subir `eventVersion`.
+
+#### Sobre común (`EventEnvelope`)
+
+| Campo | Tipo | Descripción |
+| :--- | :--- | :--- |
+| `eventId` | uuid | Único por evento. Clave de deduplicación. |
+| `eventType` | string | Nombre del evento, en pasado. |
+| `eventVersion` | integer | Versión del esquema del payload. Hoy `1`. |
+| `occurredAt` | date-time | Momento en que ocurrió el hecho. |
+| `tripId` | uuid | Viaje afectado. |
+| `correlationId` | string (opcional) | Propaga el identificador del pedido original (RNF-14). |
+| `payload` | object | Datos propios del evento. |
+
+#### Eventos
 
 | Evento | Disparador | Payload | Consumidores | Propósito |
 | :--- | :--- | :--- | :--- | :--- |
@@ -137,8 +157,55 @@ Todos los eventos comparten el sobre `EventEnvelope` (`eventId`, `eventType`, `e
 | `DriverArrived` | `POST /trips/{id}/arrived` | `TripStatusPayload` | M8 | Aviso al cliente de que el conductor llegó (RF-8.1). |
 | `TripStarted` | `POST /trips/{id}/start` | `TripStatusPayload` | M8 | Aviso de inicio del viaje (RF-8.1). |
 | `TripCompleted` | `POST /trips/{id}/complete` | `TripCompletedPayload` | M7, M8, M4, M2, M3 | Cobro y liquidación (RF-7.3 / RF-7.8); comprobante PDF (RF-8.4); liberar conductor (RF-4.4); habilitar calificaciones (RF-2.5 / RF-3.7). |
-| `TripCancelledByClient` | `POST /trips/{id}/cancel` (`CLIENT`) | `TripCancelledPayload` | M7, M8, M4 | Cargo de cancelación (RF-7.4); aviso al conductor; liberar conductor. |
-| `TripCancelledByDriver` | `POST /trips/{id}/cancel` (`DRIVER`) | `TripCancelledPayload` | M5, M8, M4 | Devolver la solicitud a despacho (RF-6.7); aviso al cliente; liberar conductor. |
+| `TripCancelledByClient` | `POST /trips/{id}/cancel` (rol `CLIENT`) | `TripCancelledPayload` | M7, M8, M4 | Cargo de cancelación (RF-7.4); aviso al conductor; liberar conductor. |
+| `TripCancelledByDriver` | `POST /trips/{id}/cancel` (rol `DRIVER`) | `TripCancelledPayload` | M5, M8, M4 | Devolver la solicitud a despacho (RF-6.7); aviso al cliente; liberar conductor. |
+
+El estado del viaje es uno solo (`CANCELLED`) para los dos roles; lo que distingue un caso del otro es **el nombre del evento** y el campo `cancelledBy` del payload. Se mantienen separados porque M5 solo necesita re-despachar cuando el que canceló fue el conductor.
+
+#### Payloads
+
+**`TripCreatedPayload`** — en `TripCreated`
+
+| Campo | Tipo | Para qué |
+| :--- | :--- | :--- |
+| `requestId` | uuid | Identifica la solicitud de M5; permite cerrar el despacho. |
+| `clientId` | uuid | M8 notifica al pasajero. |
+| `driverId` | uuid | M4 reserva al conductor asignado. |
+| `vehicleId` | uuid | M8 y M4 identifican el vehículo del viaje. |
+
+**`TripStatusPayload`** — en `DriverArrived` y `TripStarted`
+
+| Campo | Tipo | Para qué |
+| :--- | :--- | :--- |
+| `clientId` | uuid | Destinatario de la notificación (RF-8.1). |
+| `driverId` | uuid | Destinatario de la notificación y referencia para M4. |
+
+**`TripCompletedPayload`** — en `TripCompleted`
+
+| Campo | Tipo | Para qué |
+| :--- | :--- | :--- |
+| `clientId` | uuid | M7 cobra y M8 emite el comprobante. |
+| `driverId` | uuid | M7 liquida al conductor; M4 lo libera. |
+| `vehicleId` | uuid | M7 aplica la tarifa del tipo de vehículo. |
+| `distanceKm` | number | Distancia informada por el conductor (M6 no mide distancia). |
+| `durationSeconds` | integer | Duración exacta calculada por M6 (`completedAt − startedAt`). **Es el valor que M7 usa para tarifar** (RF-6.5 / RF-7.1). |
+| `durationMinutes` | integer | La misma duración, redondeada, para mostrar. |
+| `startedAt` | date-time | Inicio real del viaje, por si M7 o M8 lo necesitan sin consultar. |
+| `completedAt` | date-time | Momento del cierre. |
+
+Se envían `durationSeconds` **y** `durationMinutes` para que nadie tenga que redondear por su cuenta: dos consumidores que redondean distinto cobrarían distinto.
+
+**`TripCancelledPayload`** — en `TripCancelledByClient` y `TripCancelledByDriver`
+
+| Campo | Tipo | Para qué |
+| :--- | :--- | :--- |
+| `requestId` | uuid | M5 identifica la solicitud a re-despachar. |
+| `clientId` | uuid | M8 notifica al pasajero. |
+| `driverId` | uuid | M4 libera al conductor. |
+| `cancelledBy` | `CLIENT` \| `DRIVER` | Quién ejecutó la cancelación (RF-6.8). |
+| `reason` | string | Motivo, para el cargo (M7) y la notificación (M8). |
+| `previousState` | `TripState` | Estado desde el que se canceló (`PENDING_ARRIVAL`, `DRIVER_ARRIVED` o `IN_PROGRESS`). |
+| `secondsSinceCreation` | integer | Antigüedad del viaje al cancelarse; insumo del cargo de cancelación (RF-7.4). |
 
 ### Dependencias Síncronas Salientes
 * **M8:** validación del token / QR de un solo uso en `POST /trips/{id}/start`. Ante timeout o indisponibilidad se responde `503` sin modificar el estado (RNF-13).
@@ -150,13 +217,23 @@ Todos los eventos comparten el sobre `EventEnvelope` (`eventId`, `eventType`, `e
 
 | Decisión | Justificación |
 | :--- | :--- |
-| Un viaje en `IN_PROGRESS` no puede cancelarse por cliente ni conductor. | Una vez validado el QR, el servicio está en curso; los incidentes durante el viaje serán gestionados por el operador (alcance TP2). |
-| M6 no almacena el tipo de vehículo. | Es dato del dominio de M3 (RNF-05); M7 lo obtiene de M3 mediante `vehicleId`. |
+| M6 guarda `vehicleType` junto al viaje (copia del dato de M3 al momento de la asignación). | M7 lo necesita para calcular la tarifa sin consultar a M3 en cada cobro (RF-7.1), y queda registrado con qué tipo de vehículo se hizo cada viaje. Es una **instantánea**, no una copia de la tabla de M3: si el vehículo cambia de tipo, los viajes anteriores conservan el valor vigente al asignarse (RNF-05). |
 | Creación idempotente por `requestId` (`UNIQUE`). | Un reintento de M5 devuelve el viaje existente (`200`); el mismo `requestId` con datos distintos devuelve `409` (RNF-09). |
 | Transiciones con actualización condicional: `UPDATE ... WHERE id = ? AND state = <estado esperado>`. | Si la actualización afecta 0 filas, otra petición ya cambió el estado y se responde `409`. Impide doble inicio, doble finalización o cancelación concurrente (RNF-08). |
 | Transición e inserción en `TripEventHistory` dentro de la misma transacción. | El historial nunca queda desfasado del estado vigente (RF-6.8). |
 | Autenticación servicio a servicio con rol `SYSTEM`. | M5 invoca `POST /trips` con un token de servicio emitido por M1 (RF-1.4); los usuarios finales no pueden crear viajes. |
 | El historial para M2 expone `TripSummary` sin coordenadas. | Minimiza la exposición de ubicaciones (RF-4.7 / RNF-19). |
+|**Cancelación de un viaje en curso (RF-6.6 / RF-6.7):** se permite cancelar desde `PENDING_ARRIVAL`, `DRIVER_ARRIVED` e `IN_PROGRESS`, únicamente por el cliente titular o el conductor asignado.| El operador no cancela viajes en TP1: su gestión de incidentes queda para TP2.|
+|**Un solo estado de cancelación:** `CANCELLED` + campo `cancelledBy` (`CLIENT`, `DRIVER`), en lugar de un estado por rol.|Se eligió porque el estado describe la situación del viaje y el actor se registra aparte, sin duplicar la máquina de estados.|
+
+### Pendientes conocidos (deuda técnica)
+
+| Tema | Estado | Impacto |
+| :--- | :--- | :--- |
+| Verificación de la firma del JWT | Hoy se decodifica el token y se leen `sub` y `role`, pero **no se valida la firma**: un token fabricado con rol `SYSTEM` sería aceptado | Depende de M1 (clave pública / JWKS). Es el pendiente más importante antes de un entorno real (RF-1.4 / RNF-06) |
+| `If-Match` en escrituras | No implementado. La concurrencia se controla con estado + `version` en la base | El contrato no lo exige; se puede agregar sin cambiar el modelo (RNF-08) |
+| Tests de endpoints | Solo hay tests unitarios de la máquina de estados (11, `npm test`) | La lógica de dominio está cubierta; los endpoints se verifican con el panel de demo |
+| Bus de eventos | En memoria (`event-publisher.service.ts`), guarda los últimos 100 | Se pierde al reiniciar el servidor; queda para la iteración con RabbitMQ (RNF-10) |
 
 ---
 

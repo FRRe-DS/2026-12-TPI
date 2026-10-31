@@ -3,6 +3,7 @@ import type { TripState } from "../../generated/prisma/client.js";
 import type { AuthContext } from "../middlewares/auth.middleware.js";
 import { ApiError, sendJsonResponse } from "../middlewares/error.middleware.js";
 import type { TripService } from "../services/trip.service.js";
+import { toTripResponse } from "../mappers/trip.mapper.js";
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const VALID_STATES: TripState[] = [
@@ -10,12 +11,27 @@ const VALID_STATES: TripState[] = [
   "DRIVER_ARRIVED",
   "IN_PROGRESS",
   "COMPLETED",
-  "CANCELLED_BY_CLIENT",
-  "CANCELLED_BY_DRIVER",
+  "CANCELLED",
 ];
 
 function isValidUuid(value: unknown): value is string {
   return typeof value === "string" && UUID_REGEX.test(value);
+}
+
+/**
+ * ETag fuerte basado en la versión del viaje: cambia en cada transición (RNF-08).
+ * HTTP exige que el valor vaya entre comillas.
+ */
+function etagForVersion(version: number): string {
+  return `"${version}"`;
+}
+
+/** `If-None-Match` puede traer varios ETags separados por coma, o `*`. */
+function etagMatches(headerValue: string, etag: string): boolean {
+  return headerValue
+    .split(",")
+    .map((v) => v.trim())
+    .some((v) => v === "*" || v === etag || v === `W/${etag}`);
 }
 
 async function parseJsonBody(req: http.IncomingMessage): Promise<any> {
@@ -64,6 +80,10 @@ export class TripController {
     const originLongitude = body?.originLongitude ?? body?.origen_longitud;
     const destinationLatitude = body?.destinationLatitude ?? body?.destino_latitud;
     const destinationLongitude = body?.destinationLongitude ?? body?.destino_longitud;
+    const vehicleType = body?.vehicleType;
+    const reservationId = body?.reservationId ?? null;
+    const originAddress = body?.originAddress ?? null;
+    const destinationAddress = body?.destinationAddress ?? null;
 
     if (
       !isValidUuid(requestId) ||
@@ -99,12 +119,32 @@ export class TripController {
       );
     }
 
+    if (vehicleType !== "CAR" && vehicleType !== "MOTORCYCLE") {
+      throw new ApiError(400, "VALIDATION", "El campo vehicleType es obligatorio y debe ser CAR o MOTORCYCLE.");
+    }
+
+    if (reservationId !== null && !isValidUuid(reservationId)) {
+      throw new ApiError(400, "VALIDATION", "reservationId debe ser un UUID válido o null.");
+    }
+
+    if (originAddress !== null && (typeof originAddress !== "string" || originAddress.length > 300)) {
+      throw new ApiError(400, "VALIDATION", "originAddress debe ser texto de hasta 300 caracteres o null.");
+    }
+
+    if (destinationAddress !== null && (typeof destinationAddress !== "string" || destinationAddress.length > 300)) {
+      throw new ApiError(400, "VALIDATION", "destinationAddress debe ser texto de hasta 300 caracteres o null.");
+    }
+
     const result = await this.tripService.createTrip(
       {
         requestId,
         clientId,
         driverId,
         vehicleId,
+        vehicleType,
+        reservationId,
+        originAddress,
+        destinationAddress,
         originLatitude,
         originLongitude,
         destinationLatitude,
@@ -121,9 +161,11 @@ export class TripController {
           solicitud_id: result.trip.requestId,
           estado: "CREADO",
         }
-      : result.trip;
+      : toTripResponse(result.trip);
 
-    sendJsonResponse(res, result.statusCode, responseBody, correlationId);
+    sendJsonResponse(res, result.statusCode, responseBody, correlationId, {
+      ETag: etagForVersion(result.trip.version),
+    });
   }
 
   async listTrips(
@@ -174,6 +216,7 @@ export class TripController {
 
   async getTripById(
     tripId: string,
+    req: http.IncomingMessage,
     res: http.ServerResponse,
     auth: AuthContext,
     correlationId: string
@@ -183,7 +226,20 @@ export class TripController {
     }
 
     const trip = await this.tripService.getTripById(tripId, auth);
-    sendJsonResponse(res, 200, trip, correlationId);
+    const etag = etagForVersion(trip.version);
+    const ifNoneMatch = req.headers["if-none-match"];
+
+    // GET condicional (RFC 9110): si el cliente ya tiene esta versión, no se le manda el cuerpo.
+    if (typeof ifNoneMatch === "string" && etagMatches(ifNoneMatch, etag)) {
+      res.writeHead(304, {
+        ETag: etag,
+        ...(correlationId ? { "X-Correlation-Id": correlationId } : {}),
+      });
+      res.end();
+      return;
+    }
+
+    sendJsonResponse(res, 200, toTripResponse(trip), correlationId, { ETag: etag });
   }
 
   async markDriverArrived(
@@ -197,7 +253,9 @@ export class TripController {
     }
 
     const updated = await this.tripService.markDriverArrived(tripId, auth, correlationId);
-    sendJsonResponse(res, 200, updated, correlationId);
+    sendJsonResponse(res, 200, toTripResponse(updated), correlationId, {
+      ETag: etagForVersion(updated.version),
+    });
   }
 
   async startTrip(
@@ -228,7 +286,9 @@ export class TripController {
       auth,
       correlationId
     );
-    sendJsonResponse(res, 200, updated, correlationId);
+    sendJsonResponse(res, 200, toTripResponse(updated), correlationId, {
+      ETag: etagForVersion(updated.version),
+    });
   }
 
   async completeTrip(
@@ -243,29 +303,39 @@ export class TripController {
     }
 
     const body = await parseJsonBody(req);
-    const { distanceKm, durationMinutes } = body;
+    const { distanceKm, finalLatitude, finalLongitude } = body;
 
-    if (
-      typeof distanceKm !== "number" ||
-      distanceKm < 0.1 ||
-      typeof durationMinutes !== "number" ||
-      !Number.isInteger(durationMinutes) ||
-      durationMinutes < 1
-    ) {
+    if (typeof distanceKm !== "number" || !Number.isFinite(distanceKm) || distanceKm < 0.1) {
       throw new ApiError(
         400,
         "INVALID_COMPLETION_METRICS",
-        "Datos inválidos: se requiere distanceKm (>= 0.1) y durationMinutes (entero >= 1)."
+        "Datos inválidos: se requiere distanceKm (número mayor o igual a 0.1)."
       );
+    }
+
+    if (
+      finalLatitude !== undefined &&
+      (typeof finalLatitude !== "number" || finalLatitude < -90 || finalLatitude > 90)
+    ) {
+      throw new ApiError(400, "INVALID_COMPLETION_METRICS", "finalLatitude debe ser un número entre -90 y 90.");
+    }
+
+    if (
+      finalLongitude !== undefined &&
+      (typeof finalLongitude !== "number" || finalLongitude < -180 || finalLongitude > 180)
+    ) {
+      throw new ApiError(400, "INVALID_COMPLETION_METRICS", "finalLongitude debe ser un número entre -180 y 180.");
     }
 
     const updated = await this.tripService.completeTrip(
       tripId,
-      { distanceKm, durationMinutes },
+      { distanceKm, finalLatitude, finalLongitude },
       auth,
       correlationId
     );
-    sendJsonResponse(res, 200, updated, correlationId);
+    sendJsonResponse(res, 200, toTripResponse(updated), correlationId, {
+      ETag: etagForVersion(updated.version),
+    });
   }
 
   async cancelTrip(
@@ -291,7 +361,9 @@ export class TripController {
     }
 
     const updated = await this.tripService.cancelTrip(tripId, reason, auth, correlationId);
-    sendJsonResponse(res, 200, updated, correlationId);
+    sendJsonResponse(res, 200, toTripResponse(updated), correlationId, {
+      ETag: etagForVersion(updated.version),
+    });
   }
 
   async getTripHistory(

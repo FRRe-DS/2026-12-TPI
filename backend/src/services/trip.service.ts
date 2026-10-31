@@ -80,6 +80,10 @@ export class TripService {
         existing.clientId === input.clientId &&
         existing.driverId === input.driverId &&
         existing.vehicleId === input.vehicleId &&
+        existing.vehicleType === input.vehicleType &&
+        existing.reservationId === (input.reservationId ?? null) &&
+        existing.originAddress === (input.originAddress ?? null) &&
+        existing.destinationAddress === (input.destinationAddress ?? null) &&
         existing.originLatitude === input.originLatitude &&
         existing.originLongitude === input.originLongitude &&
         existing.destinationLatitude === input.destinationLatitude &&
@@ -91,7 +95,7 @@ export class TripService {
 
       throw new ApiError(
         409,
-        "CONFLICT_REQUEST_ID",
+        "REQUEST_ID_CONFLICT",
         "El requestId ya existe pero con datos distintos a los del pedido original."
       );
     }
@@ -300,9 +304,9 @@ export class TripService {
    * RF-6.5 / RNF-08: Finalizar el viaje registrando métricas de distancia y duración (`IN_PROGRESS` -> `COMPLETED`).
    * Delega la validación de transición de estado en TripStateMachine.validate(...) (RF-6.1).
    */
-  async completeTrip(
+    async completeTrip(
     tripId: string,
-    metrics: { distanceKm: number; durationMinutes: number },
+    metrics: { distanceKm: number; finalLatitude?: number; finalLongitude?: number },
     auth: AuthContext,
     correlationId: string
   ) {
@@ -319,8 +323,22 @@ export class TripService {
       );
     }
 
-    // Validación formal mediante la máquina de estados de dominio (RF-6.1)
     this.validateStateTransition(trip.state, TripState.COMPLETED, auth.role);
+
+    if (!trip.startedAt) {
+      throw new ApiError(
+        409,
+        "INVALID_STATE_TRANSITION",
+        "El viaje no tiene hora de inicio registrada; no se puede calcular la duración."
+      );
+    }
+
+    const completedAt = new Date();
+    const durationSeconds = Math.max(
+      0,
+      Math.round((completedAt.getTime() - trip.startedAt.getTime()) / 1000)
+    );
+    const durationMinutes = Math.max(1, Math.round(durationSeconds / 60));
 
     const updated = await this.tripRepository.transitionStateAtomic({
       tripId,
@@ -329,11 +347,12 @@ export class TripService {
       actorId: auth.sub,
       actorRole: "DRIVER",
       distanceKm: metrics.distanceKm,
-      durationMinutes: metrics.durationMinutes,
-      metadata: {
-        distanceKm: metrics.distanceKm,
-        durationMinutes: metrics.durationMinutes,
-      },
+      durationSeconds,
+      durationMinutes,
+      completedAt,
+      ...(metrics.finalLatitude !== undefined ? { finalLatitude: metrics.finalLatitude } : {}),
+      ...(metrics.finalLongitude !== undefined ? { finalLongitude: metrics.finalLongitude } : {}),
+      metadata: { distanceKm: metrics.distanceKm, durationSeconds, durationMinutes },
     });
 
     if (!updated) {
@@ -352,7 +371,10 @@ export class TripService {
         driverId: trip.driverId,
         vehicleId: trip.vehicleId,
         distanceKm: metrics.distanceKm,
-        durationMinutes: metrics.durationMinutes,
+        durationSeconds,
+        durationMinutes,
+        startedAt: trip.startedAt.toISOString(),
+        completedAt: completedAt.toISOString(),
       },
       correlationId
     );
@@ -360,9 +382,11 @@ export class TripService {
     return updated;
   }
 
-  /**
-   * RF-6.6 y RF-6.7: Cancelar un viaje por parte del cliente o conductor desde `PENDING_ARRIVAL` o `DRIVER_ARRIVED`.
-   * Delega la validación de transición de estado en TripStateMachine.validate(...) (RF-6.1).
+    /**
+   * RF-6.6 y RF-6.7: Cancelar un viaje por parte del cliente o conductor desde
+   * `PENDING_ARRIVAL`, `DRIVER_ARRIVED` o `IN_PROGRESS` (RF-6.1).
+   * El estado destino es siempre `CANCELLED`: quién canceló se guarda en `cancelledBy`
+   * y en el historial (RF-6.8).
    */
   async cancelTrip(tripId: string, reason: string, auth: AuthContext, correlationId: string) {
     const trip = await this.tripRepository.findById(tripId);
@@ -381,9 +405,7 @@ export class TripService {
       );
     }
 
-    const targetState: TripState = isClientOwner
-      ? TripState.CANCELLED_BY_CLIENT
-      : TripState.CANCELLED_BY_DRIVER;
+    const targetState: TripState = TripState.CANCELLED;
     const cancelledBy = isClientOwner ? "CLIENT" : "DRIVER";
 
     // Validación formal mediante la máquina de estados de dominio (RF-6.1)
@@ -401,8 +423,9 @@ export class TripService {
       targetState,
       actorId: auth.sub,
       actorRole: cancelledBy,
+      cancelledBy,
       reason,
-      metadata: { previousState, secondsSinceCreation },
+      metadata: { previousState, secondsSinceCreation, cancelledBy },
     });
 
     if (!updated) {

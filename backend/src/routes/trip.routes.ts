@@ -1,17 +1,8 @@
 import http from "node:http";
 import crypto from "node:crypto";
-import { prisma } from "../config/database.js";
 import { authenticateMiddleware } from "../middlewares/auth.middleware.js";
 import { ApiError, handleErrorMiddleware } from "../middlewares/error.middleware.js";
-import { TripRepository } from "../repositories/trip.repository.js";
-import { eventPublisher } from "../services/event-publisher.service.js";
-import { TripService } from "../services/trip.service.js";
-import { TripController } from "../controllers/trip.controller.js";
-
-// Inyección de dependencias (Wiring de las capas: Repository -> Service -> Controller)
-const tripRepository = new TripRepository(prisma);
-const tripService = new TripService(tripRepository, eventPublisher);
-const tripController = new TripController(tripService);
+import { tripController } from "../config/services.js";
 
 /**
  * CAPA DE ENRUTAMIENTO (Router Layer)
@@ -22,7 +13,12 @@ export async function handleApiV1Router(
   res: http.ServerResponse,
   url: URL
 ): Promise<boolean> {
-  if (!url.pathname.startsWith("/api/v1")) {
+  const isContractPath =
+    url.pathname === "/health" ||
+    url.pathname === "/trips" ||
+    url.pathname.startsWith("/trips/");
+
+  if (!isContractPath) {
     return false;
   }
 
@@ -31,7 +27,8 @@ export async function handleApiV1Router(
       "Access-Control-Allow-Origin": "*",
       "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
       "Access-Control-Allow-Headers":
-        "Content-Type, Authorization, X-Correlation-Id, X-Actor-Role, X-Actor-Id",
+        "Content-Type, Authorization, X-Correlation-Id, X-Actor-Role, X-Actor-Id, If-None-Match, If-Match",
+      "Access-Control-Expose-Headers": "ETag, X-Correlation-Id",
     });
     res.end();
     return true;
@@ -39,7 +36,7 @@ export async function handleApiV1Router(
 
   const correlationId =
     (req.headers["x-correlation-id"] as string | undefined) || crypto.randomUUID();
-  const subPath = url.pathname.slice("/api/v1".length) || "/";
+  const subPath = url.pathname;
 
   try {
     // 1. GET /api/v1/health (Público, sin requerir JWT)
@@ -51,8 +48,8 @@ export async function handleApiV1Router(
     // Middleware de Autenticación JWT (M1)
     const auth = authenticateMiddleware(req);
 
-    // 2. POST /api/v1/trips (y alias /api/v1/viajes para compatibilidad con propuesta M5)
-    if (req.method === "POST" && (subPath === "/trips" || subPath === "/viajes")) {
+    // 2. POST /trips
+    if (req.method === "POST" && subPath === "/trips") {
       await tripController.createTrip(req, res, auth, correlationId);
       return true;
     }
@@ -71,7 +68,7 @@ export async function handleApiV1Router(
 
       // 4. GET /api/v1/trips/{id}
       if (req.method === "GET" && action === "") {
-        await tripController.getTripById(tripId, res, auth, correlationId);
+        await tripController.getTripById(tripId, req, res, auth, correlationId);
         return true;
       }
 

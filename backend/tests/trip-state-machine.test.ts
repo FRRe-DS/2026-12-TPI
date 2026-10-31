@@ -71,12 +71,12 @@ describe('TripStateMachine - Pruebas Unitarias (RF-6.1)', () => {
       const stateMachine = new TripStateMachine();
       const contextClient: TransitionContext = {
         currentState: TripState.COMPLETED,
-        targetState: TripState.CANCELLED_BY_CLIENT,
+        targetState: TripState.CANCELLED,
         role: ActorRole.CLIENT,
       };
       const contextDriver: TransitionContext = {
         currentState: TripState.COMPLETED,
-        targetState: TripState.CANCELLED_BY_DRIVER,
+        targetState: TripState.CANCELLED,
         role: ActorRole.DRIVER,
       };
 
@@ -126,22 +126,22 @@ describe('TripStateMachine - Pruebas Unitarias (RF-6.1)', () => {
       // Arrange
       const cancelByClientPending: TransitionContext = {
         currentState: TripState.PENDING_ARRIVAL,
-        targetState: TripState.CANCELLED_BY_CLIENT,
+        targetState: TripState.CANCELLED,
         role: ActorRole.CLIENT,
       };
       const cancelByDriverPending: TransitionContext = {
         currentState: TripState.PENDING_ARRIVAL,
-        targetState: TripState.CANCELLED_BY_DRIVER,
+        targetState: TripState.CANCELLED,
         role: ActorRole.DRIVER,
       };
       const cancelByClientArrived: TransitionContext = {
         currentState: TripState.DRIVER_ARRIVED,
-        targetState: TripState.CANCELLED_BY_CLIENT,
+        targetState: TripState.CANCELLED,
         role: ActorRole.CLIENT,
       };
       const cancelByDriverArrived: TransitionContext = {
         currentState: TripState.DRIVER_ARRIVED,
-        targetState: TripState.CANCELLED_BY_DRIVER,
+        targetState: TripState.CANCELLED,
         role: ActorRole.DRIVER,
       };
 
@@ -152,37 +152,47 @@ describe('TripStateMachine - Pruebas Unitarias (RF-6.1)', () => {
       expect(TripStateMachine.validate(cancelByDriverArrived)).toBe(true);
     });
 
-    it('debe rechazar la cancelación de un viaje en estado IN_PROGRESS', () => {
+    it('debe permitir cancelar un viaje en IN_PROGRESS por cliente o conductor', () => {
       // Arrange
       const cancelClientInProgress: TransitionContext = {
         currentState: TripState.IN_PROGRESS,
-        targetState: TripState.CANCELLED_BY_CLIENT,
+        targetState: TripState.CANCELLED,
         role: ActorRole.CLIENT,
       };
       const cancelDriverInProgress: TransitionContext = {
         currentState: TripState.IN_PROGRESS,
-        targetState: TripState.CANCELLED_BY_DRIVER,
+        targetState: TripState.CANCELLED,
         role: ActorRole.DRIVER,
       };
 
       // Act & Assert
-      expect(() => TripStateMachine.validate(cancelClientInProgress)).toThrow(
-        InvalidStateTransitionError
-      );
-      expect(() => TripStateMachine.validate(cancelDriverInProgress)).toThrow(
-        InvalidStateTransitionError
+      expect(TripStateMachine.validate(cancelClientInProgress)).toBe(true);
+      expect(TripStateMachine.validate(cancelDriverInProgress)).toBe(true);
+    });
+
+    it('debe rechazar que un operador cancele un viaje (TP1: gestión de incidentes es TP2)', () => {
+      // Arrange
+      const cancelByOperator: TransitionContext = {
+        currentState: TripState.IN_PROGRESS,
+        targetState: TripState.CANCELLED,
+        role: ActorRole.OPERATOR,
+      };
+
+      // Act & Assert
+      expect(() => TripStateMachine.validate(cancelByOperator)).toThrow(
+        UnauthorizedRoleTransitionError
       );
     });
 
     it('debe rechazar cualquier transición desde estados terminales CANCELLED', () => {
       // Arrange
       const fromCancelledClient: TransitionContext = {
-        currentState: TripState.CANCELLED_BY_CLIENT,
+        currentState: TripState.CANCELLED,
         targetState: TripState.IN_PROGRESS,
         role: ActorRole.DRIVER,
       };
       const fromCancelledDriver: TransitionContext = {
-        currentState: TripState.CANCELLED_BY_DRIVER,
+        currentState: TripState.CANCELLED,
         targetState: TripState.PENDING_ARRIVAL,
         role: ActorRole.DRIVER,
       };
