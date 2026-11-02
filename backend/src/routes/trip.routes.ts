@@ -105,11 +105,11 @@ export async function handleApiV1Router(
 
     throw new ApiError(
       404,
-      "ENDPOINT_NOT_FOUND",
+      "ROUTE_NOT_FOUND",
       `Ruta OpenAPI no encontrada: ${req.method} ${url.pathname}`
     );
   } catch (err) {
-    handleErrorMiddleware(err, res, correlationId);
+    handleErrorMiddleware(err, res, correlationId, url.pathname);
     return true;
   }
 }

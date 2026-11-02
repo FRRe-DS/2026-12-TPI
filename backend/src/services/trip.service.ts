@@ -45,10 +45,12 @@ export class TripService {
       });
     } catch (err) {
       if (err instanceof UnauthorizedRoleTransitionError) {
-        throw new ApiError(403, "FORBIDDEN_ROLE", err.message);
+        throw new ApiError(403, "FORBIDDEN", err.message);
       }
       if (err instanceof InvalidStateTransitionError) {
-        throw new ApiError(409, "INVALID_STATE_TRANSITION", err.message);
+        throw new ApiError(409, "INVALID_STATE_TRANSITION", err.message, {
+        currentState: String(currentState),
+        });
       }
       throw err;
     }
@@ -69,7 +71,7 @@ export class TripService {
     if (auth.role !== "SYSTEM") {
       throw new ApiError(
         403,
-        "FORBIDDEN_ROLE",
+        "FORBIDDEN",
         "Solo el rol SYSTEM (token de servicio de M5) está autorizado para crear viajes."
       );
     }
@@ -141,7 +143,7 @@ export class TripService {
     if (auth.role === "SYSTEM" && !query.clientId && !query.driverId && !query.state) {
       throw new ApiError(
         400,
-        "FILTER_REQUIRED",
+        "VALIDATION",
         "Debe especificar al menos un filtro (por ejemplo clientId) al consultar viajes desde otro módulo."
       );
     }
@@ -197,7 +199,7 @@ export class TripService {
     if (auth.role !== "DRIVER" || auth.sub !== trip.driverId) {
       throw new ApiError(
         403,
-        "FORBIDDEN_DRIVER",
+        "FORBIDDEN",
         "Solo el conductor asignado al viaje (DRIVER) puede registrar el arribo."
       );
     }
@@ -214,7 +216,7 @@ export class TripService {
     });
 
     if (!updated) {
-      throw new ApiError(409, "CONCURRENT_STATE_CONFLICT", "El estado del viaje cambió concurrentemente.");
+      throw new ApiError(409, "CONCURRENCY_CONFLICT", "El estado del viaje cambió concurrentemente.");
     }
 
     this.publisher.publish(
@@ -245,7 +247,7 @@ export class TripService {
     if (auth.role !== "DRIVER" || auth.sub !== trip.driverId) {
       throw new ApiError(
         403,
-        "FORBIDDEN_DRIVER",
+        "FORBIDDEN",
         "Solo el conductor asignado al viaje (DRIVER) puede iniciar el viaje."
       );
     }
@@ -257,8 +259,9 @@ export class TripService {
     if (verificationToken === "m8_timeout" || verificationToken === "simulate_503") {
       throw new ApiError(
         503,
-        "M8_VALIDATION_UNAVAILABLE",
-        "Servicio de validación (M8) no disponible o timeout excedido (RNF-13)."
+        "DEPENDENCY_UNAVAILABLE",
+        "Servicio de validación (M8) no disponible o timeout excedido (RNF-13).",
+        { headers: { "Retry-After": "5" } }
       );
     }
 
@@ -270,7 +273,7 @@ export class TripService {
     ) {
       throw new ApiError(
         422,
-        "INVALID_VERIFICATION_TOKEN",
+        "INVALID_VERIFICATION_CODE",
         "El código QR / token de verificación es inválido, ya fue usado o expiró."
       );
     }
@@ -287,7 +290,7 @@ export class TripService {
     });
 
     if (!updated) {
-      throw new ApiError(409, "CONCURRENT_STATE_CONFLICT", "El estado del viaje cambió concurrentemente.");
+      throw new ApiError(409, "CONCURRENCY_CONFLICT", "El estado del viaje cambió concurrentemente.");
     }
 
     this.publisher.publish(
@@ -318,7 +321,7 @@ export class TripService {
     if (auth.role !== "DRIVER" || auth.sub !== trip.driverId) {
       throw new ApiError(
         403,
-        "FORBIDDEN_DRIVER",
+        "FORBIDDEN",
         "Solo el conductor asignado al viaje (DRIVER) puede finalizar el viaje."
       );
     }
@@ -358,7 +361,7 @@ export class TripService {
     if (!updated) {
       throw new ApiError(
         409,
-        "CONCURRENT_COMPLETION_CONFLICT",
+        "CONCURRENCY_CONFLICT",
         "El viaje ya fue finalizado concurrentemente (RNF-08)."
       );
     }
@@ -400,7 +403,7 @@ export class TripService {
     if (!isClientOwner && !isDriverOwner) {
       throw new ApiError(
         403,
-        "FORBIDDEN_CANCEL",
+        "FORBIDDEN",
         "Solo el cliente titular del viaje o el conductor asignado pueden cancelarlo."
       );
     }
@@ -429,7 +432,7 @@ export class TripService {
     });
 
     if (!updated) {
-      throw new ApiError(409, "CONCURRENT_STATE_CONFLICT", "El estado del viaje cambió concurrentemente.");
+      throw new ApiError(409, "CONCURRENCY_CONFLICT", "El estado del viaje cambió concurrentemente.");
     }
 
     this.publisher.publish(

@@ -84,14 +84,14 @@ export function authenticateMiddleware(req: http.IncomingMessage): AuthContext {
   if (!authHeader || !authHeader.startsWith("Bearer ")) {
     throw new ApiError(
       401,
-      "UNAUTHORIZED",
+      "UNAUTHENTICATED",
       "Token JWT ausente o formato inválido. Se requiere header Authorization: Bearer <token> (M1)."
     );
   }
 
   const token = authHeader.slice("Bearer ".length).trim();
   if (!token) {
-    throw new ApiError(401, "UNAUTHORIZED", "Token JWT vacío.");
+    throw new ApiError(401, "UNAUTHENTICATED", "Token JWT vacío.");
   }
 
   // Soporte de tokens rápidos en Swagger ("SYSTEM", "SERVICIO", "DRIVER:<uuid>", etc.)
@@ -112,7 +112,7 @@ export function authenticateMiddleware(req: http.IncomingMessage): AuthContext {
 
   const parts = token.split(".");
   if (parts.length < 2 || !parts[1]) {
-    throw new ApiError(401, "INVALID_TOKEN", "El token JWT proporcionado no tiene una estructura válida.");
+    throw new ApiError(401, "UNAUTHENTICATED", "El token JWT proporcionado no tiene una estructura válida.");
   }
 
   try {
@@ -123,13 +123,13 @@ export function authenticateMiddleware(req: http.IncomingMessage): AuthContext {
     if (!role || !VALID_ROLES.includes(role)) {
       throw new ApiError(
         401,
-        "INVALID_TOKEN_CLAIMS",
+        "UNAUTHENTICATED",
         "El token JWT no contiene un claim 'role' o 'roles' válido (CLIENT/CLIENTE, DRIVER/CONDUCTOR, OPERATOR/OPERADOR, SYSTEM/SERVICIO)."
       );
     }
 
     if (decoded.exp && typeof decoded.exp === "number" && decoded.exp * 1000 < Date.now()) {
-      throw new ApiError(401, "TOKEN_EXPIRED", "El token JWT ha expirado.");
+      throw new ApiError(401, "UNAUTHENTICATED", "El token JWT ha expirado.");
     }
 
     return {
@@ -138,6 +138,6 @@ export function authenticateMiddleware(req: http.IncomingMessage): AuthContext {
     };
   } catch (err) {
     if (err instanceof ApiError) throw err;
-    throw new ApiError(401, "INVALID_TOKEN", "No se pudo decodificar el payload del token JWT.");
+    throw new ApiError(401, "UNAUTHENTICATED", "No se pudo decodificar el payload del token JWT.");
   }
 }
