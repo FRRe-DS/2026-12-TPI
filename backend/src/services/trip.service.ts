@@ -2,8 +2,12 @@ import type { TripState as PrismaTripState } from "../../generated/prisma/client
 import type { AuthContext } from "../middlewares/auth.middleware.js";
 import { ApiError } from "../middlewares/error.middleware.js";
 import type { TripRepository, CreateTripRepoInput } from "../repositories/trip.repository.js";
-import type { EventPublisherService } from "./event-publisher.service.js";
 import { toTripSummary } from "../mappers/trip.mapper.js";
+import {
+  buildTripCompletedPayload,
+  buildTripCreatedPayload,
+  type EventPublisherService,
+} from "./event-publisher.service.js";
 import {
   TripStateMachine,
   TripState,
@@ -125,17 +129,7 @@ export class TripService {
 
     const created = await this.tripRepository.createTripWithInitialEvent(input, auth.sub);
 
-    this.publisher.publish(
-      "TripCreated",
-      created.id,
-      {
-        requestId: created.requestId,
-        clientId: created.clientId,
-        driverId: created.driverId,
-        vehicleId: created.vehicleId,
-      },
-      correlationId
-    );
+    this.publisher.publish("TripCreated", created.id, buildTripCreatedPayload(created), correlationId);
 
     return { statusCode: 201 as const, trip: created };
   }
@@ -380,16 +374,16 @@ export class TripService {
     this.publisher.publish(
       "TripCompleted",
       tripId,
-      {
-        clientId: trip.clientId,
-        driverId: trip.driverId,
-        vehicleId: trip.vehicleId,
+      buildTripCompletedPayload({
+        trip,
+        startedAt: trip.startedAt,
+        completedAt,
         distanceKm: metrics.distanceKm,
         durationSeconds,
         durationMinutes,
-        startedAt: trip.startedAt.toISOString(),
-        completedAt: completedAt.toISOString(),
-      },
+        finalLatitude: metrics.finalLatitude,
+        finalLongitude: metrics.finalLongitude,
+      }),
       correlationId
     );
 
