@@ -6,6 +6,12 @@ import type { TripService } from "../services/trip.service.js";
 import { toTripResponse, toTripHistory } from "../mappers/trip.mapper.js";
 import { CANCELLATION_REASONS, isCancellationReason } from "../domain/cancellation-rules.js";
 import { parseIfMatch } from "../middlewares/preconditions.js";
+import type { Trip } from "../../generated/prisma/client.js";
+import {
+  fingerprintOf,
+  parseIdempotencyKey,
+  type IdempotencyService,
+} from "../services/idempotency.service.js";
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const VALID_STATES: TripState[] = [
@@ -104,7 +110,10 @@ async function parseJsonBody(req: http.IncomingMessage): Promise<any> {
  * delega la operación al `TripService` y formatea la respuesta HTTP.
  */
 export class TripController {
-  constructor(private readonly tripService: TripService) {}
+  constructor(
+    private readonly tripService: TripService,
+    private readonly idempotency: IdempotencyService
+  ) {}
 
   async getHealth(_req: http.IncomingMessage, res: http.ServerResponse, correlationId: string) {
     const status = await this.tripService.getHealthStatus();
@@ -310,6 +319,34 @@ export class TripController {
     sendJsonResponse(res, 200, toTripResponse(trip), correlationId, { ETag: etag });
   }
 
+  /**
+   * Ejecuta una acción sobre el viaje y responde 200 con el viaje actualizado.
+   * Si viene `Idempotency-Key`, un reintento devuelve la respuesta guardada (con `Idempotent-Replayed: true`).
+   */
+  private async respondWithTrip(
+    req: http.IncomingMessage,
+    res: http.ServerResponse,
+    auth: AuthContext,
+    correlationId: string,
+    request: { path: string; body?: unknown },
+    execute: () => Promise<Trip>
+  ) {
+    const outcome = await this.idempotency.run({
+      key: parseIdempotencyKey(req.headers["idempotency-key"]),
+      actorId: auth.sub,
+      fingerprint: fingerprintOf("POST", request.path, request.body),
+      execute: async () => {
+        const trip = await execute();
+        return { status: 200, body: toTripResponse(trip), etag: etagForVersion(trip.version) };
+      },
+    });
+
+    sendJsonResponse(res, outcome.status, outcome.body, correlationId, {
+      ETag: outcome.etag,
+      ...(outcome.replayed ? { "Idempotent-Replayed": "true" } : {}),
+    });
+  }
+
   async markDriverArrived(
     tripId: string,
     req: http.IncomingMessage,
@@ -322,10 +359,14 @@ export class TripController {
     }
     const ifMatch = parseIfMatch(req.headers["if-match"]);
 
-    const updated = await this.tripService.markDriverArrived(tripId, auth, correlationId, ifMatch);
-    sendJsonResponse(res, 200, toTripResponse(updated), correlationId, {
-      ETag: etagForVersion(updated.version),
-    });
+    await this.respondWithTrip(
+      req,
+      res,
+      auth,
+      correlationId,
+      { path: `/trips/${tripId.toLowerCase()}/arrived` },
+      () => this.tripService.markDriverArrived(tripId, auth, correlationId, ifMatch)
+    );
   }
 
   async startTrip(
@@ -351,16 +392,14 @@ export class TripController {
       );
     }
 
-    const updated = await this.tripService.startTrip(
-      tripId,
-      verificationToken.trim(),
+    await this.respondWithTrip(
+      req,
+      res,
       auth,
       correlationId,
-      ifMatch
+      { path: `/trips/${tripId.toLowerCase()}/start`, body },
+      () => this.tripService.startTrip(tripId, verificationToken.trim(), auth, correlationId, ifMatch)
     );
-    sendJsonResponse(res, 200, toTripResponse(updated), correlationId, {
-      ETag: etagForVersion(updated.version),
-    });
   }
 
   async completeTrip(
@@ -401,16 +440,21 @@ export class TripController {
       throw new ApiError(400, "VALIDATION", "finalLongitude debe ser un número entre -180 y 180.");
     }
 
-    const updated = await this.tripService.completeTrip(
-      tripId,
-      { distanceKm, finalLatitude, finalLongitude },
+    await this.respondWithTrip(
+      req,
+      res,
       auth,
       correlationId,
-      ifMatch
+      { path: `/trips/${tripId.toLowerCase()}/complete`, body },
+      () =>
+        this.tripService.completeTrip(
+          tripId,
+          { distanceKm, finalLatitude, finalLongitude },
+          auth,
+          correlationId,
+          ifMatch
+        )
     );
-    sendJsonResponse(res, 200, toTripResponse(updated), correlationId, {
-      ETag: etagForVersion(updated.version),
-    });
   }
 
   async cancelTrip(
@@ -443,16 +487,14 @@ export class TripController {
       });
     }
 
-    const updated = await this.tripService.cancelTrip(
-      tripId,
-      { reason, detail },
+    await this.respondWithTrip(
+      req,
+      res,
       auth,
       correlationId,
-      ifMatch
+      { path: `/trips/${tripId.toLowerCase()}/cancel`, body },
+      () => this.tripService.cancelTrip(tripId, { reason, detail }, auth, correlationId, ifMatch)
     );
-    sendJsonResponse(res, 200, toTripResponse(updated), correlationId, {
-      ETag: etagForVersion(updated.version),
-    });
   }
 
   async getTripHistory(

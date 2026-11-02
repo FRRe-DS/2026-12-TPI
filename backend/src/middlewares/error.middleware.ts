@@ -83,9 +83,9 @@ export function sendJsonResponse(
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
     "Access-Control-Allow-Headers":
-      "Content-Type, Authorization, X-Correlation-Id, X-Actor-Role, X-Actor-Id, If-None-Match, If-Match",
+      "Content-Type, Authorization, X-Correlation-Id, X-Actor-Role, X-Actor-Id, If-None-Match, If-Match, Idempotency-Key",
     "Access-Control-Expose-Headers":
-      "ETag, X-Correlation-Id, Retry-After, Location, RateLimit-Limit, RateLimit-Remaining, RateLimit-Reset",
+      "ETag, X-Correlation-Id, Retry-After, Location, RateLimit-Limit, RateLimit-Remaining, RateLimit-Reset, Idempotent-Replayed",
   };
   if (correlationId) {
     headers["X-Correlation-Id"] = correlationId;
