@@ -18,7 +18,9 @@ export interface CreateTripRepoInput {
 export interface ListTripsFilter {
   clientId?: string;
   driverId?: string;
-  state?: TripState;
+  states?: TripState[];
+  from?: Date;
+  to?: Date;
   page: number;
   pageSize: number;
 }
@@ -97,13 +99,19 @@ export class TripRepository {
   }
 
   /**
-   * Lista viajes paginados devolviendo exclusivamente las columnas de `TripSummary` (sin coordenadas, RF-4.7).
-   */
+  * Lista viajes paginados devolviendo exclusivamente las columnas de `TripSummary` (sin coordenadas, RF-4.7).
+  */
   async findSummariesPaginated(filter: ListTripsFilter) {
     const where: Record<string, unknown> = {};
     if (filter.clientId) where.clientId = filter.clientId;
     if (filter.driverId) where.driverId = filter.driverId;
-    if (filter.state) where.state = filter.state;
+    if (filter.states && filter.states.length > 0) where.state = { in: filter.states };
+    if (filter.from || filter.to) {
+      where.createdAt = {
+        ...(filter.from ? { gte: filter.from } : {}), // from: inclusive
+        ...(filter.to ? { lt: filter.to } : {}), // to: exclusivo
+      };
+    }
 
     const [total, items] = await Promise.all([
       this.db.trip.count({ where }),

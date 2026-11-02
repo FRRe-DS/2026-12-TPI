@@ -57,6 +57,16 @@ export class TripService {
     }
   }
 
+  /** CLIENT y DRIVER solo ven su propio viaje; OPERATOR y SYSTEM ven todos. */
+  private canViewTrip(trip: { clientId: string; driverId: string }, auth: AuthContext): boolean {
+    return (
+      auth.role === "OPERATOR" ||
+      auth.role === "SYSTEM" ||
+      (auth.role === "CLIENT" && auth.sub === trip.clientId) ||
+      (auth.role === "DRIVER" && auth.sub === trip.driverId)
+    );
+  }
+
   async getHealthStatus() {
     await this.tripRepository.checkDatabaseHealth();
     return {
@@ -122,40 +132,39 @@ export class TripService {
 
   /**
    * RF-2.4 / RF-4.7: Listar viajes resumidos y paginados (`TripSummaryPage`).
+   * CLIENT y DRIVER solo ven lo suyo: su propio filtro se ignora y se usa el id del token.
    */
   async listTrips(
     query: {
       clientId?: string;
       driverId?: string;
-      state?: TripState | PrismaTripState;
+      states?: PrismaTripState[];
+      from?: Date;
+      to?: Date;
       page: number;
       pageSize: number;
     },
     auth: AuthContext
   ) {
-    if (auth.role === "CLIENT" && query.clientId && query.clientId !== auth.sub) {
-      throw new ApiError(403, "FORBIDDEN", "Un CLIENT solo puede consultar su propio historial (clientId).");
-    }
-    if (auth.role === "DRIVER" && query.driverId && query.driverId !== auth.sub) {
-      throw new ApiError(403, "FORBIDDEN", "Un DRIVER solo puede consultar sus propios viajes (driverId).");
-    }
-
-    // Si llama un servicio (ej. M2 con SYSTEM/SERVICIO), exigimos filtro para no devolver viajes de todos los clientes
-    if (auth.role === "SYSTEM" && !query.clientId && !query.driverId && !query.state) {
+    // Un servicio no puede listar los viajes de todos los clientes.
+    if (auth.role === "SYSTEM" && !query.clientId && !query.driverId) {
       throw new ApiError(
         400,
         "VALIDATION",
-        "Debe especificar al menos un filtro (por ejemplo clientId) al consultar viajes desde otro módulo."
+        "Un servicio debe indicar clientId o driverId para listar viajes.",
+        { errors: [{ field: "clientId", message: "se requiere clientId o driverId" }] }
       );
     }
 
-    const effectiveClientId = auth.role === "CLIENT" ? query.clientId || auth.sub : query.clientId;
-    const effectiveDriverId = auth.role === "DRIVER" ? query.driverId || auth.sub : query.driverId;
+    const clientId = auth.role === "CLIENT" ? auth.sub : query.clientId;
+    const driverId = auth.role === "DRIVER" ? auth.sub : query.driverId;
 
     const result = await this.tripRepository.findSummariesPaginated({
-      clientId: effectiveClientId,
-      driverId: effectiveDriverId,
-      state: query.state as PrismaTripState | undefined,
+      clientId,
+      driverId,
+      states: query.states,
+      from: query.from,
+      to: query.to,
       page: query.page,
       pageSize: query.pageSize,
     });
@@ -165,27 +174,13 @@ export class TripService {
 
   /**
    * RF-6.2: Consultar estado actual y resumen de un viaje.
+   * A un cliente o conductor ajeno se le responde 404, para no revelar que el viaje existe.
    */
   async getTripById(tripId: string, auth: AuthContext) {
     const trip = await this.tripRepository.findById(tripId);
-    if (!trip) {
+    if (!trip || !this.canViewTrip(trip, auth)) {
       throw new ApiError(404, "TRIP_NOT_FOUND", `No se encontró el viaje con ID ${tripId}.`);
     }
-
-    const isAuthorized =
-      auth.role === "OPERATOR" ||
-      auth.role === "SYSTEM" ||
-      (auth.role === "CLIENT" && auth.sub === trip.clientId) ||
-      (auth.role === "DRIVER" && auth.sub === trip.driverId);
-
-    if (!isAuthorized) {
-      throw new ApiError(
-        403,
-        "FORBIDDEN",
-        "No tiene permisos para consultar este viaje (debe ser el cliente, el conductor asignado o un operador)."
-      );
-    }
-
     return trip;
   }
 
@@ -456,27 +451,18 @@ export class TripService {
     return updated;
   }
 
-  /**
+    /**
    * RF-6.8: Consultar el historial inmutable de transiciones del viaje.
+   * SYSTEM no tiene acceso (403); un cliente o conductor ajeno recibe 404.
    */
   async getTripHistory(tripId: string, auth: AuthContext) {
-    const trip = await this.tripRepository.findById(tripId);
-    if (!trip) {
-      throw new ApiError(404, "TRIP_NOT_FOUND", `No se encontró el viaje con ID ${tripId}.`);
+    if (auth.role === "SYSTEM") {
+      throw new ApiError(403, "FORBIDDEN", "SYSTEM no puede consultar el historial de un viaje.");
     }
 
-    const isAuthorized =
-      auth.role === "OPERATOR" ||
-      auth.role === "SYSTEM" ||
-      (auth.role === "CLIENT" && auth.sub === trip.clientId) ||
-      (auth.role === "DRIVER" && auth.sub === trip.driverId);
-
-    if (!isAuthorized) {
-      throw new ApiError(
-        403,
-        "FORBIDDEN",
-        "No tiene permisos para consultar el historial de auditoría de este viaje."
-      );
+    const trip = await this.tripRepository.findById(tripId);
+    if (!trip || !this.canViewTrip(trip, auth)) {
+      throw new ApiError(404, "TRIP_NOT_FOUND", `No se encontró el viaje con ID ${tripId}.`);
     }
 
     return this.tripRepository.findEventHistoryByTripId(tripId);

@@ -18,6 +18,19 @@ function isValidUuid(value: unknown): value is string {
   return typeof value === "string" && UUID_REGEX.test(value);
 }
 
+/** Lee un parámetro `from`/`to` de la URL como fecha ISO 8601. */
+function parseDateParam(url: URL, name: "from" | "to"): Date | undefined {
+  const raw = url.searchParams.get(name);
+  if (!raw) return undefined;
+  const date = new Date(raw);
+  if (Number.isNaN(date.getTime())) {
+    throw new ApiError(400, "VALIDATION", `${name} debe ser una fecha ISO 8601 válida.`, {
+      errors: [{ field: name, message: "debe ser una fecha ISO 8601 válida" }],
+    });
+  }
+  return date;
+}
+
 /**
  * ETag fuerte basado en la versión del viaje: cambia en cada transición (RNF-08).
  * HTTP exige que el valor vaya entre comillas.
@@ -186,9 +199,25 @@ export class TripController {
     if (driverIdParam && !isValidUuid(driverIdParam)) {
       throw new ApiError(400, "VALIDATION", "El parámetro driverId debe ser un UUID válido.");
     }
-    if (stateParam && !VALID_STATES.includes(stateParam as TripState)) {
-      throw new ApiError(400, "VALIDATION", `El parámetro state debe ser uno de: ${VALID_STATES.join(", ")}.`);
+
+    // `state` admite varios valores separados por coma: ?state=COMPLETED,CANCELLED
+    let states: TripState[] | undefined;
+    if (stateParam) {
+      const requested = stateParam.split(",").map((s) => s.trim());
+      const invalid = requested.filter((s) => !VALID_STATES.includes(s as TripState));
+      if (invalid.length > 0) {
+        throw new ApiError(
+          400,
+          "VALIDATION",
+          `El parámetro state tiene valores inválidos: ${invalid.join(", ")}. Valores permitidos: ${VALID_STATES.join(", ")}.`,
+          { errors: [{ field: "state", message: `valores permitidos: ${VALID_STATES.join(", ")}` }] }
+        );
+      }
+      states = requested as TripState[];
     }
+
+    const from = parseDateParam(url, "from");
+    const to = parseDateParam(url, "to");
 
     const page = Number(pageParam);
     const pageSize = Number(pageSizeParam);
@@ -204,7 +233,9 @@ export class TripController {
       {
         clientId: clientIdParam,
         driverId: driverIdParam,
-        state: stateParam as TripState | undefined,
+        states,
+        from,
+        to,
         page,
         pageSize,
       },
