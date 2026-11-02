@@ -3,6 +3,7 @@ import type { AuthContext } from "../middlewares/auth.middleware.js";
 import { ApiError } from "../middlewares/error.middleware.js";
 import type { TripRepository, CreateTripRepoInput } from "../repositories/trip.repository.js";
 import type { EventPublisherService } from "./event-publisher.service.js";
+import { toTripSummary } from "../mappers/trip.mapper.js";
 import {
   TripStateMachine,
   TripState,
@@ -151,13 +152,15 @@ export class TripService {
     const effectiveClientId = auth.role === "CLIENT" ? query.clientId || auth.sub : query.clientId;
     const effectiveDriverId = auth.role === "DRIVER" ? query.driverId || auth.sub : query.driverId;
 
-    return this.tripRepository.findSummariesPaginated({
+    const result = await this.tripRepository.findSummariesPaginated({
       clientId: effectiveClientId,
       driverId: effectiveDriverId,
       state: query.state as PrismaTripState | undefined,
       page: query.page,
       pageSize: query.pageSize,
     });
+
+    return { ...result, items: result.items.map(toTripSummary) };
   }
 
   /**

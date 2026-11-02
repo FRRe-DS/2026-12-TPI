@@ -115,11 +115,15 @@ export class TripRepository {
         select: {
           id: true,
           state: true,
+          vehicleType: true,
           clientId: true,
           driverId: true,
+          originAddress: true,
+          destinationAddress: true,
           distanceKm: true,
           durationMinutes: true,
           createdAt: true,
+          completedAt: true,
         },
       }),
     ]);
