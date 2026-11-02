@@ -11,6 +11,16 @@ import {
   InvalidStateTransitionError,
   UnauthorizedRoleTransitionError,
 } from "../domain/trip-state-machine.js";
+import {
+  checkCancellationReason,
+  requiresRedispatch,
+  type CancellationReasonValue,
+} from "../domain/cancellation-rules.js";
+
+/** Minutos desde el arribo para aceptar CLIENT_NO_SHOW (configurable por entorno, RNF-06). */
+const parsedNoShowMinutes = Number(process.env.CLIENT_NO_SHOW_MINUTES ?? 5);
+const CLIENT_NO_SHOW_MINUTES =
+  Number.isFinite(parsedNoShowMinutes) && parsedNoShowMinutes >= 0 ? parsedNoShowMinutes : 5;
 
 /**
  * CAPA DE LÓGICA DE NEGOCIO (Service Layer)
@@ -383,13 +393,17 @@ export class TripService {
     return updated;
   }
 
-    /**
-   * RF-6.6 y RF-6.7: Cancelar un viaje por parte del cliente o conductor desde
-   * `PENDING_ARRIVAL`, `DRIVER_ARRIVED` o `IN_PROGRESS` (RF-6.1).
-   * El estado destino es siempre `CANCELLED`: quién canceló se guarda en `cancelledBy`
-   * y en el historial (RF-6.8).
-   */
-  async cancelTrip(tripId: string, reason: string, auth: AuthContext, correlationId: string) {
+  /**
+  * RF-6.6 y RF-6.7: cancelar un viaje. Cliente y conductor, antes de iniciar; el operador, en cualquier
+  * estado no terminal. El estado destino es siempre CANCELLED; quién canceló, el motivo y si hay que
+  * re-despachar quedan guardados en el viaje y en el historial (RF-6.8).
+  */
+  async cancelTrip(
+    tripId: string,
+    input: { reason: CancellationReasonValue; detail?: string },
+    auth: AuthContext,
+    correlationId: string
+  ) {
     const trip = await this.tripRepository.findById(tripId);
     if (!trip) {
       throw new ApiError(404, "TRIP_NOT_FOUND", `No se encontró el viaje con ID ${tripId}.`);
@@ -397,21 +411,34 @@ export class TripService {
 
     const isClientOwner = auth.role === "CLIENT" && auth.sub === trip.clientId;
     const isDriverOwner = auth.role === "DRIVER" && auth.sub === trip.driverId;
+    const isOperator = auth.role === "OPERATOR";
 
-    if (!isClientOwner && !isDriverOwner) {
+    if (!isClientOwner && !isDriverOwner && !isOperator) {
       throw new ApiError(
         403,
         "FORBIDDEN",
-        "Solo el cliente titular del viaje o el conductor asignado pueden cancelarlo."
+        "Solo el cliente titular del viaje, el conductor asignado o un operador pueden cancelarlo."
       );
     }
 
-    const targetState: TripState = TripState.CANCELLED;
-    const cancelledBy = isClientOwner ? "CLIENT" : "DRIVER";
+    const cancelledBy = isOperator ? "OPERATOR" : isClientOwner ? "CLIENT" : "DRIVER";
 
-    // Validación formal mediante la máquina de estados de dominio (RF-6.1)
-    this.validateStateTransition(trip.state, targetState, auth.role);
+    // 1) ¿El rol puede cancelar desde este estado? (máquina de estados, RF-6.1)
+    this.validateStateTransition(trip.state, TripState.CANCELLED, auth.role);
 
+    // 2) ¿El motivo corresponde al rol y a este momento?
+    const problem = checkCancellationReason(
+      cancelledBy,
+      input.reason,
+      trip.arrivedAt,
+      new Date(),
+      CLIENT_NO_SHOW_MINUTES
+    );
+    if (problem) {
+      throw new ApiError(422, "REASON_NOT_ALLOWED", problem);
+    }
+
+    const redispatch = requiresRedispatch(cancelledBy, input.reason);
     const previousState = trip.state;
     const secondsSinceCreation = Math.max(
       0,
@@ -421,12 +448,22 @@ export class TripService {
     const updated = await this.tripRepository.transitionStateAtomic({
       tripId,
       expectedFromState: previousState,
-      targetState,
+      targetState: "CANCELLED",
       actorId: auth.sub,
       actorRole: cancelledBy,
       cancelledBy,
-      reason,
-      metadata: { previousState, secondsSinceCreation, cancelledBy },
+      reason: input.reason,
+      cancellationReason: input.reason,
+      cancellationDetail: input.detail,
+      cancelledFromState: previousState,
+      requiresRedispatch: redispatch,
+      metadata: {
+        previousState,
+        secondsSinceCreation,
+        cancelledBy,
+        requiresRedispatch: redispatch,
+        ...(input.detail ? { detail: input.detail } : {}),
+      },
     });
 
     if (!updated) {
@@ -434,15 +471,17 @@ export class TripService {
     }
 
     this.publisher.publish(
-      isClientOwner ? "TripCancelledByClient" : "TripCancelledByDriver",
+      "TripCancelled",
       tripId,
       {
         requestId: trip.requestId,
         clientId: trip.clientId,
         driverId: trip.driverId,
         cancelledBy,
-        reason,
+        reason: input.reason,
+        ...(input.detail ? { detail: input.detail } : {}),
         previousState,
+        requiresRedispatch: redispatch,
         secondsSinceCreation,
       },
       correlationId
@@ -451,10 +490,10 @@ export class TripService {
     return updated;
   }
 
-    /**
-   * RF-6.8: Consultar el historial inmutable de transiciones del viaje.
-   * SYSTEM no tiene acceso (403); un cliente o conductor ajeno recibe 404.
-   */
+  /**
+  * RF-6.8: Consultar el historial inmutable de transiciones del viaje.
+  * SYSTEM no tiene acceso (403); un cliente o conductor ajeno recibe 404.
+  */
   async getTripHistory(tripId: string, auth: AuthContext) {
     if (auth.role === "SYSTEM") {
       throw new ApiError(403, "FORBIDDEN", "SYSTEM no puede consultar el historial de un viaje.");

@@ -1,4 +1,4 @@
-import { PrismaClient, TripState, ActorRole, VehicleType} from "../../generated/prisma/client.js";
+import { PrismaClient, TripState, ActorRole, VehicleType, CancellationReason } from "../../generated/prisma/client.js";
 
 export interface CreateTripRepoInput {
   requestId: string;
@@ -39,6 +39,10 @@ export interface TransitionTripRepoInput {
   finalLongitude?: number;
   completedAt?: Date;
   cancelledBy?: ActorRole;
+  cancellationReason?: CancellationReason;
+  cancellationDetail?: string;
+  cancelledFromState?: TripState;
+  requiresRedispatch?: boolean;
   metadata?: Record<string, unknown>;
 }
 
@@ -172,6 +176,10 @@ export class TripRepository {
       ...(input.durationMinutes !== undefined ? { durationMinutes: input.durationMinutes } : {}),
       ...(input.durationSeconds !== undefined ? { durationSeconds: input.durationSeconds } : {}),
       ...(input.cancelledBy !== undefined ? { cancelledBy: input.cancelledBy } : {}),
+      ...(input.cancellationReason !== undefined ? { cancellationReason: input.cancellationReason } : {}),
+      ...(input.cancellationDetail !== undefined ? { cancellationDetail: input.cancellationDetail } : {}),
+      ...(input.cancelledFromState !== undefined ? { cancelledFromState: input.cancelledFromState } : {}),
+      ...(input.requiresRedispatch !== undefined ? { requiresRedispatch: input.requiresRedispatch } : {}),
       ...(input.finalLatitude !== undefined ? { finalLatitude: input.finalLatitude } : {}),
       ...(input.finalLongitude !== undefined ? { finalLongitude: input.finalLongitude } : {}),
     };

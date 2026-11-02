@@ -1,5 +1,4 @@
-import type { Trip, TripState, VehicleType } from "../../generated/prisma/client.js";
-
+import type { Trip, TripState, VehicleType, ActorRole, CancellationReason } from "../../generated/prisma/client.js";
 /** Cierre del viaje: schema `Closure` del contrato. */
 export interface ClosureResponse {
   distanceKm: number;
@@ -7,12 +6,19 @@ export interface ClosureResponse {
   finalLatitude?: number;
   finalLongitude?: number;
 }
+/** Cancelación del viaje: schema `Cancellation` del contrato. */
+export interface CancellationResponse {
+  cancelledBy: Exclude<ActorRole, "SYSTEM">;
+  reason: CancellationReason;
+  detail?: string;
+  previousState: TripState;
+  requiresRedispatch: boolean;
+}
 
 /**
  * Forma pública del viaje: lo que declara el schema `Trip` de openapi.yaml.
  * Si un campo no está acá, no sale en la respuesta, aunque exista en la tabla.
  * Las direcciones son opcionales en el contrato (no admiten null): se omiten si no hay valor.
- * TODO bloque 4: agregar `cancellation` cuando se guarden motivo, estado previo y re-despacho.
  */
 export interface TripResponse {
   id: string;
@@ -39,6 +45,7 @@ export interface TripResponse {
   distanceKm: number | null;
   durationMinutes: number | null;
   closure: ClosureResponse | null;
+  cancellation: CancellationResponse | null;
 }
 
 /** Las fechas de Prisma son `Date`; el contrato pide texto ISO 8601. */
@@ -56,6 +63,27 @@ function toClosure(trip: Trip): ClosureResponse | null {
     durationSeconds: trip.durationSeconds,
     ...(trip.finalLatitude !== null ? { finalLatitude: trip.finalLatitude } : {}),
     ...(trip.finalLongitude !== null ? { finalLongitude: trip.finalLongitude } : {}),
+  };
+}
+
+/** `cancellation` solo existe cuando el viaje está CANCELLED (schema `Cancellation`). */
+function toCancellation(trip: Trip): CancellationResponse | null {
+  if (
+    trip.state !== "CANCELLED" ||
+    !trip.cancelledBy ||
+    trip.cancelledBy === "SYSTEM" ||
+    !trip.cancellationReason ||
+    !trip.cancelledFromState ||
+    trip.requiresRedispatch === null
+  ) {
+    return null;
+  }
+  return {
+    cancelledBy: trip.cancelledBy,
+    reason: trip.cancellationReason,
+    ...(trip.cancellationDetail !== null ? { detail: trip.cancellationDetail } : {}),
+    previousState: trip.cancelledFromState,
+    requiresRedispatch: trip.requiresRedispatch,
   };
 }
 
@@ -85,6 +113,7 @@ export function toTripResponse(trip: Trip): TripResponse {
     distanceKm: trip.distanceKm,
     durationMinutes: trip.durationMinutes,
     closure: toClosure(trip),
+    cancellation: toCancellation(trip),
   };
 }
 

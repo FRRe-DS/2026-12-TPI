@@ -327,9 +327,13 @@ const server = http.createServer(async (req: http.IncomingMessage, res: http.Ser
           const cancelledBy = body.cancelledBy === "DRIVER" ? "DRIVER" : "CLIENT";
           await tripService.cancelTrip(
             tripId,
-            typeof reason === "string" && reason.trim()
-              ? reason.trim()
-              : "Cancelado desde el panel",
+            {
+              reason: "OTHER",
+              detail:
+                typeof reason === "string" && reason.trim()
+                  ? reason.trim().slice(0, 500)
+                  : "Cancelado desde el panel",
+            },
             {
               sub: cancelledBy === "CLIENT" ? trip.clientId : trip.driverId,
               role: cancelledBy,

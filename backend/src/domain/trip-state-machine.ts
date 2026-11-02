@@ -47,8 +47,8 @@ export const VALID_TRANSITIONS: readonly StateTransitionRule[] = [
   {
     from: TripState.PENDING_ARRIVAL,
     to: TripState.CANCELLED,
-    allowedRoles: [ActorRole.CLIENT, ActorRole.DRIVER],
-    description: 'El cliente o el conductor cancela antes del arribo (RF-6.6 / RF-6.7)',
+    allowedRoles: [ActorRole.CLIENT, ActorRole.DRIVER, ActorRole.OPERATOR],
+    description: 'Cancelación antes del arribo por cliente, conductor u operador (RF-6.6 / RF-6.7)',
   },
   {
     from: TripState.DRIVER_ARRIVED,
@@ -60,8 +60,8 @@ export const VALID_TRANSITIONS: readonly StateTransitionRule[] = [
   {
     from: TripState.DRIVER_ARRIVED,
     to: TripState.CANCELLED,
-    allowedRoles: [ActorRole.CLIENT, ActorRole.DRIVER],
-    description: 'El cliente o el conductor cancela mientras el conductor espera (RF-6.6 / RF-6.7)',
+    allowedRoles: [ActorRole.CLIENT, ActorRole.DRIVER, ActorRole.OPERATOR],
+    description: 'Cancelación mientras el conductor espera (RF-6.6 / RF-6.7)',
   },
 
   {
@@ -74,8 +74,8 @@ export const VALID_TRANSITIONS: readonly StateTransitionRule[] = [
   {
     from: TripState.IN_PROGRESS,
     to: TripState.CANCELLED,
-    allowedRoles: [ActorRole.CLIENT, ActorRole.DRIVER],
-    description: 'Cancelación durante el viaje: el cliente se baja o el conductor no puede continuar (RF-6.6 / RF-6.7)',
+    allowedRoles: [ActorRole.OPERATOR],
+    description: 'Cancelación durante el viaje: solo el operador, por incidente o bloqueo administrativo',
   },
 ] as const;
 

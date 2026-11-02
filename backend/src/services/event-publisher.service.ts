@@ -6,8 +6,7 @@ export type DomainEventType =
   | "DriverArrived"
   | "TripStarted"
   | "TripCompleted"
-  | "TripCancelledByClient"
-  | "TripCancelledByDriver";
+  | "TripCancelled";
 
 export interface EventEnvelope<T extends DomainEventType, P> {
   eventId: string;
@@ -46,9 +45,11 @@ export interface TripCancelledPayload {
   requestId: string;
   clientId: string;
   driverId: string;
-  cancelledBy: "CLIENT" | "DRIVER";
+  cancelledBy: "CLIENT" | "DRIVER" | "OPERATOR";
   reason: string;
+  detail?: string;
   previousState: TripState;
+  requiresRedispatch: boolean;
   secondsSinceCreation: number;
 }
 
@@ -57,8 +58,7 @@ export type AnyDomainEvent =
   | EventEnvelope<"DriverArrived", TripStatusPayload>
   | EventEnvelope<"TripStarted", TripStatusPayload>
   | EventEnvelope<"TripCompleted", TripCompletedPayload>
-  | EventEnvelope<"TripCancelledByClient", TripCancelledPayload>
-  | EventEnvelope<"TripCancelledByDriver", TripCancelledPayload>;
+  | EventEnvelope<"TripCancelled", TripCancelledPayload>;
 
 /**
  * CAPA DE SERVICIO DE MENSAJERÍA / EVENTOS DE DOMINIO (RNF-03 / RNF-10)

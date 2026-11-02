@@ -40,6 +40,20 @@ enum ActorRole {
   @@map("actor_role")
 }
 
+enum CancellationReason {
+  CHANGE_OF_PLANS
+  EXCESSIVE_DELAY
+  DRIVER_NO_SHOW
+  CLIENT_NO_SHOW
+  VEHICLE_PROBLEM
+  ORIGIN_UNREACHABLE
+  SECURITY_INCIDENT
+  ADMINISTRATIVE_BLOCK
+  OTHER
+
+  @@map("cancellation_reason")
+}
+
 model Trip {
   id                   String             @id @default(uuid()) @db.Uuid
   requestId            String             @unique @map("request_id") @db.Uuid
@@ -61,6 +75,10 @@ model Trip {
   completedAt          DateTime?          @map("completed_at")
   cancelledAt          DateTime?          @map("cancelled_at")
   cancelledBy          ActorRole?         @map("cancelled_by")
+  cancellationReason   CancellationReason? @map("cancellation_reason")
+  cancellationDetail   String?             @map("cancellation_detail")
+  cancelledFromState   TripState?          @map("cancelled_from_state")
+  requiresRedispatch   Boolean?            @map("requires_redispatch")
   distanceKm           Float?             @map("distance_km")
   durationMinutes      Int?               @map("duration_minutes")
   durationSeconds      Int?               @map("duration_seconds")

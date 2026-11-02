@@ -4,6 +4,7 @@ import type { AuthContext } from "../middlewares/auth.middleware.js";
 import { ApiError, sendJsonResponse } from "../middlewares/error.middleware.js";
 import type { TripService } from "../services/trip.service.js";
 import { toTripResponse } from "../mappers/trip.mapper.js";
+import { CANCELLATION_REASONS, isCancellationReason } from "../domain/cancellation-rules.js";
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const VALID_STATES: TripState[] = [
@@ -382,17 +383,24 @@ export class TripController {
     }
 
     const body = await parseJsonBody(req);
-    const reason = typeof body?.reason === "string" ? body.reason.trim() : "";
+    const { reason, detail } = body ?? {};
 
-    if (reason.length < 3 || reason.length > 255) {
+    if (!isCancellationReason(reason)) {
       throw new ApiError(
         400,
         "VALIDATION",
-        "El motivo de cancelación (reason) es obligatorio y debe tener entre 3 y 255 caracteres."
+        `El campo reason es obligatorio y debe ser uno de: ${CANCELLATION_REASONS.join(", ")}.`,
+        { errors: [{ field: "reason", message: `valores permitidos: ${CANCELLATION_REASONS.join(", ")}` }] }
       );
     }
 
-    const updated = await this.tripService.cancelTrip(tripId, reason, auth, correlationId);
+    if (detail !== undefined && (typeof detail !== "string" || detail.length > 500)) {
+      throw new ApiError(400, "VALIDATION", "detail debe ser un texto de hasta 500 caracteres.", {
+        errors: [{ field: "detail", message: "debe ser un texto de hasta 500 caracteres" }],
+      });
+    }
+
+    const updated = await this.tripService.cancelTrip(tripId, { reason, detail }, auth, correlationId);
     sendJsonResponse(res, 200, toTripResponse(updated), correlationId, {
       ETag: etagForVersion(updated.version),
     });
