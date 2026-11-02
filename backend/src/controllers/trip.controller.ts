@@ -3,7 +3,7 @@ import type { TripState } from "../../generated/prisma/client.js";
 import type { AuthContext } from "../middlewares/auth.middleware.js";
 import { ApiError, sendJsonResponse } from "../middlewares/error.middleware.js";
 import type { TripService } from "../services/trip.service.js";
-import { toTripResponse } from "../mappers/trip.mapper.js";
+import { toTripResponse, toTripHistory } from "../mappers/trip.mapper.js";
 import { CANCELLATION_REASONS, isCancellationReason } from "../domain/cancellation-rules.js";
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -417,6 +417,6 @@ export class TripController {
     }
 
     const history = await this.tripService.getTripHistory(tripId, auth);
-    sendJsonResponse(res, 200, history, correlationId);
+        sendJsonResponse(res, 200, toTripHistory(tripId, history), correlationId);
   }
 }

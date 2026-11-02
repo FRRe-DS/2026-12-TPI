@@ -114,36 +114,15 @@ const server = http.createServer(async (req: http.IncomingMessage, res: http.Ser
             state: "COMPLETED",
             distanceKm: 1.8,
             durationMinutes: 7,
+            version: 4,
           },
         });
         await tx.tripEventHistory.createMany({
           data: [
-            {
-              tripId: t1.id,
-              state: "PENDING_ARRIVAL",
-              actorRole: "SYSTEM",
-              metadata: { source: "M5_DISPATCH", requestId: req1 },
-            },
-            {
-              tripId: t1.id,
-              state: "DRIVER_ARRIVED",
-              actorId: driver1,
-              actorRole: "DRIVER",
-            },
-            {
-              tripId: t1.id,
-              state: "IN_PROGRESS",
-              actorId: driver1,
-              actorRole: "DRIVER",
-              metadata: { qrVerifiedWithM8: true },
-            },
-            {
-              tripId: t1.id,
-              state: "COMPLETED",
-              actorId: driver1,
-              actorRole: "DRIVER",
-              metadata: { distanceKm: 1.8, durationMinutes: 7 },
-            },
+            { tripId: t1.id, sequence: 1, action: "CREATE", state: "PENDING_ARRIVAL", actorId: "m5-dispatch-service", actorRole: "SYSTEM", metadata: { source: "M5_DISPATCH", requestId: req1 } },
+            { tripId: t1.id, sequence: 2, fromState: "PENDING_ARRIVAL", action: "REGISTER_ARRIVAL", state: "DRIVER_ARRIVED", actorId: driver1, actorRole: "DRIVER" },
+            { tripId: t1.id, sequence: 3, fromState: "DRIVER_ARRIVED", action: "START", state: "IN_PROGRESS", actorId: driver1, actorRole: "DRIVER", metadata: { qrVerifiedWithM8: true } },
+            { tripId: t1.id, sequence: 4, fromState: "IN_PROGRESS", action: "COMPLETE", state: "COMPLETED", actorId: driver1, actorRole: "DRIVER", metadata: { distanceKm: 1.8, durationMinutes: 7 } },
           ],
         });
 
@@ -164,7 +143,10 @@ const server = http.createServer(async (req: http.IncomingMessage, res: http.Ser
         await tx.tripEventHistory.create({
           data: {
             tripId: t2.id,
+            sequence: 1,
+            action: "CREATE",
             state: "PENDING_ARRIVAL",
+            actorId: "m5-dispatch-service",
             actorRole: "SYSTEM",
             metadata: { source: "M5_DISPATCH", requestId: req2 },
           },
@@ -190,23 +172,13 @@ const server = http.createServer(async (req: http.IncomingMessage, res: http.Ser
             destinationLongitude: -58.9915,
             state: "CANCELLED",
             cancelledBy: "CLIENT",
+            version: 2,
           },
         });
         await tx.tripEventHistory.createMany({
           data: [
-            {
-              tripId: t3.id,
-              state: "PENDING_ARRIVAL",
-              actorRole: "SYSTEM",
-              metadata: { source: "M5_DISPATCH", requestId: req3 },
-            },
-            {
-              tripId: t3.id,
-              state: "CANCELLED",
-              actorId: client3,
-              actorRole: "CLIENT",
-              reason: "Demora excesiva del conductor asignado",
-            },
+            { tripId: t3.id, sequence: 1, action: "CREATE", state: "PENDING_ARRIVAL", actorId: "m5-dispatch-service", actorRole: "SYSTEM", metadata: { source: "M5_DISPATCH", requestId: req3 } },
+            { tripId: t3.id, sequence: 2, fromState: "PENDING_ARRIVAL", action: "CANCEL", state: "CANCELLED", actorId: client3, actorRole: "CLIENT", reason: "EXCESSIVE_DELAY", detail: "Demora excesiva del conductor asignado" },
           ],
         });
       });
@@ -268,7 +240,10 @@ const server = http.createServer(async (req: http.IncomingMessage, res: http.Ser
         await tx.tripEventHistory.create({
           data: {
             tripId: trip.id,
+            sequence: 1,
+            action: "CREATE",
             state: "PENDING_ARRIVAL",
+            actorId: "m5-dispatch-service",
             actorRole: "SYSTEM",
             metadata: { source: "M5_DISPATCH", requestId },
           },

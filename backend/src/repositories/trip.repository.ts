@@ -1,4 +1,4 @@
-import { PrismaClient, TripState, ActorRole, VehicleType, CancellationReason } from "../../generated/prisma/client.js";
+import { PrismaClient, TripState, ActorRole, VehicleType, CancellationReason, TripAction } from "../../generated/prisma/client.js";
 
 export interface CreateTripRepoInput {
   requestId: string;
@@ -29,7 +29,8 @@ export interface TransitionTripRepoInput {
   tripId: string;
   expectedFromState?: TripState;
   targetState: TripState;
-  actorId: string | null;
+  action: TripAction;
+  actorId: string;
   actorRole: ActorRole;
   reason?: string | null;
   distanceKm?: number;
@@ -69,7 +70,7 @@ export class TripRepository {
   /**
    * Crea el viaje en `trips` y su primer registro en `trip_event_history` en una única transacción ACID.
    */
-  async createTripWithInitialEvent(input: CreateTripRepoInput) {
+  async createTripWithInitialEvent(input: CreateTripRepoInput, actorId: string) {
     return this.db.$transaction(async (tx) => {
       const trip = await tx.trip.create({
         data: {
@@ -92,7 +93,10 @@ export class TripRepository {
       await tx.tripEventHistory.create({
         data: {
           tripId: trip.id,
+          sequence: trip.version,
+          action: "CREATE",
           state: "PENDING_ARRIVAL",
+          actorId,
           actorRole: "SYSTEM",
           metadata: { source: "M5_DISPATCH", requestId: input.requestId },
         },
@@ -201,18 +205,25 @@ export class TripRepository {
         });
       }
 
+      const updated = await tx.trip.findUniqueOrThrow({ where: { id: input.tripId } });
+
+      // sequence = versión del viaje luego de la transición (1 al crear, +1 por cada cambio)
       await tx.tripEventHistory.create({
         data: {
           tripId: input.tripId,
+          sequence: updated.version,
+          fromState: input.expectedFromState ?? null,
           state: input.targetState,
+          action: input.action,
           actorId: input.actorId,
           actorRole: input.actorRole,
           reason: input.reason ?? null,
+          detail: input.cancellationDetail ?? null,
           ...(input.metadata ? { metadata: input.metadata as any } : {}),
         },
       });
 
-      return tx.trip.findUniqueOrThrow({ where: { id: input.tripId } });
+      return updated;
     });
   }
 
@@ -222,7 +233,7 @@ export class TripRepository {
   async findEventHistoryByTripId(tripId: string) {
     return this.db.tripEventHistory.findMany({
       where: { tripId },
-      orderBy: { createdAt: "asc" },
+      orderBy: { sequence: "asc" },
     });
   }
 }

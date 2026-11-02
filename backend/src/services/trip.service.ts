@@ -123,7 +123,7 @@ export class TripService {
       );
     }
 
-    const created = await this.tripRepository.createTripWithInitialEvent(input);
+    const created = await this.tripRepository.createTripWithInitialEvent(input, auth.sub);
 
     this.publisher.publish(
       "TripCreated",
@@ -219,6 +219,7 @@ export class TripService {
       tripId,
       expectedFromState: trip.state,
       targetState: "DRIVER_ARRIVED",
+      action: "REGISTER_ARRIVAL",
       actorId: auth.sub,
       actorRole: "DRIVER",
     });
@@ -292,6 +293,7 @@ export class TripService {
       tripId,
       expectedFromState: trip.state,
       targetState: "IN_PROGRESS",
+      action: "START",
       actorId: auth.sub,
       actorRole: "DRIVER",
       metadata: { qrVerifiedWithM8: true, tokenPrefix: verificationToken.slice(0, 10) },
@@ -355,6 +357,7 @@ export class TripService {
       tripId,
       expectedFromState: trip.state,
       targetState: "COMPLETED",
+      action: "COMPLETE",
       actorId: auth.sub,
       actorRole: "DRIVER",
       distanceKm: metrics.distanceKm,
@@ -449,6 +452,7 @@ export class TripService {
       tripId,
       expectedFromState: previousState,
       targetState: "CANCELLED",
+      action: "CANCEL",
       actorId: auth.sub,
       actorRole: cancelledBy,
       cancelledBy,

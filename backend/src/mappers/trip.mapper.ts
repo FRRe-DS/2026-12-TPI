@@ -1,4 +1,14 @@
-import type { Trip, TripState, VehicleType, ActorRole, CancellationReason } from "../../generated/prisma/client.js";
+import type {
+  Trip,
+  TripEventHistory,
+  TripState,
+  TripAction,
+  VehicleType,
+  ActorRole,
+  CancellationReason,
+} from "../../generated/prisma/client.js";
+import { isCancellationReason } from "../domain/cancellation-rules.js";
+
 /** Cierre del viaje: schema `Closure` del contrato. */
 export interface ClosureResponse {
   distanceKm: number;
@@ -161,4 +171,33 @@ export function toTripSummary(row: TripSummaryRow): TripSummaryResponse {
     distanceKm: row.distanceKm,
     durationMinutes: row.durationMinutes,
   };
+}
+
+/** Transición del historial: schema `TripTransition` del contrato. */
+export interface TripTransitionResponse {
+  sequence: number;
+  from: TripState | null;
+  to: TripState;
+  action: TripAction;
+  actor: { role: ActorRole; id: string };
+  occurredAt: string;
+  reason?: CancellationReason;
+  detail?: string;
+}
+
+/** Respuesta de `GET /trips/{tripId}/history`. */
+export function toTripHistory(tripId: string, rows: TripEventHistory[]) {
+  const transitions: TripTransitionResponse[] = rows.map((row) => ({
+    sequence: row.sequence,
+    from: row.fromState,
+    to: row.state,
+    action: row.action,
+    actor: { role: row.actorRole, id: row.actorId },
+    occurredAt: row.createdAt.toISOString(),
+    // `reason` es del catálogo de motivos de cancelación; cualquier otro texto se omite.
+    ...(isCancellationReason(row.reason) ? { reason: row.reason as CancellationReason } : {}),
+    ...(row.detail !== null ? { detail: row.detail } : {}),
+  }));
+
+  return { tripId, transitions };
 }
