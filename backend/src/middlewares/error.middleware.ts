@@ -84,7 +84,8 @@ export function sendJsonResponse(
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
     "Access-Control-Allow-Headers":
       "Content-Type, Authorization, X-Correlation-Id, X-Actor-Role, X-Actor-Id, If-None-Match, If-Match",
-    "Access-Control-Expose-Headers": "ETag, X-Correlation-Id, Retry-After",
+    "Access-Control-Expose-Headers":
+      "ETag, X-Correlation-Id, Retry-After, Location, RateLimit-Limit, RateLimit-Remaining, RateLimit-Reset",
   };
   if (correlationId) {
     headers["X-Correlation-Id"] = correlationId;

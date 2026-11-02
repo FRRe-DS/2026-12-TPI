@@ -3,6 +3,7 @@ import crypto from "node:crypto";
 import { authenticateMiddleware } from "../middlewares/auth.middleware.js";
 import { ApiError, handleErrorMiddleware } from "../middlewares/error.middleware.js";
 import { tripController } from "../config/services.js";
+import { applyRateLimit } from "../middlewares/rate-limit.middleware.js";
 
 /**
  * CAPA DE ENRUTAMIENTO (Router Layer)
@@ -28,7 +29,8 @@ export async function handleApiV1Router(
       "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
       "Access-Control-Allow-Headers":
         "Content-Type, Authorization, X-Correlation-Id, X-Actor-Role, X-Actor-Id, If-None-Match, If-Match",
-      "Access-Control-Expose-Headers": "ETag, X-Correlation-Id",
+      "Access-Control-Expose-Headers":
+        "ETag, X-Correlation-Id, Retry-After, Location, RateLimit-Limit, RateLimit-Remaining, RateLimit-Reset",
     });
     res.end();
     return true;
@@ -47,6 +49,7 @@ export async function handleApiV1Router(
 
     // Middleware de Autenticación JWT (M1)
     const auth = authenticateMiddleware(req);
+    applyRateLimit(auth, res);
 
     // 2. POST /trips
     if (req.method === "POST" && subPath === "/trips") {
@@ -74,7 +77,7 @@ export async function handleApiV1Router(
 
       // 5. POST /api/v1/trips/{id}/arrived
       if (req.method === "POST" && action === "/arrived") {
-        await tripController.markDriverArrived(tripId, res, auth, correlationId);
+        await tripController.markDriverArrived(tripId, req, res, auth, correlationId);
         return true;
       }
 

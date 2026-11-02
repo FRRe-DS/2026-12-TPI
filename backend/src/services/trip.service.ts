@@ -3,6 +3,7 @@ import type { AuthContext } from "../middlewares/auth.middleware.js";
 import { ApiError } from "../middlewares/error.middleware.js";
 import type { TripRepository, CreateTripRepoInput } from "../repositories/trip.repository.js";
 import { toTripSummary } from "../mappers/trip.mapper.js";
+import { assertIfMatch } from "../middlewares/preconditions.js";
 import {
   buildTripCompletedPayload,
   buildTripCreatedPayload,
@@ -192,7 +193,7 @@ export class TripService {
    * RF-6.3: Indicar arribo del conductor al punto de retiro (`PENDING_ARRIVAL` -> `DRIVER_ARRIVED`).
    * Delega la validación de transición de estado en TripStateMachine.validate(...) (RF-6.1).
    */
-  async markDriverArrived(tripId: string, auth: AuthContext, correlationId: string) {
+  async markDriverArrived(tripId: string, auth: AuthContext, correlationId: string, ifMatch?: number) {
     const trip = await this.tripRepository.findById(tripId);
     if (!trip) {
       throw new ApiError(404, "TRIP_NOT_FOUND", `No se encontró el viaje con ID ${tripId}.`);
@@ -205,6 +206,8 @@ export class TripService {
         "Solo el conductor asignado al viaje (DRIVER) puede registrar el arribo."
       );
     }
+
+    assertIfMatch(trip.version, ifMatch);
 
     // Validación formal mediante la máquina de estados de dominio (RF-6.1)
     this.validateStateTransition(trip.state, TripState.DRIVER_ARRIVED, auth.role);
@@ -240,7 +243,8 @@ export class TripService {
     tripId: string,
     verificationToken: string,
     auth: AuthContext,
-    correlationId: string
+    correlationId: string,
+    ifMatch?: number
   ) {
     const trip = await this.tripRepository.findById(tripId);
     if (!trip) {
@@ -254,6 +258,8 @@ export class TripService {
         "Solo el conductor asignado al viaje (DRIVER) puede iniciar el viaje."
       );
     }
+
+    assertIfMatch(trip.version, ifMatch);
 
     // Validación formal mediante la máquina de estados de dominio (RF-6.1)
     this.validateStateTransition(trip.state, TripState.IN_PROGRESS, auth.role);
@@ -315,7 +321,8 @@ export class TripService {
     tripId: string,
     metrics: { distanceKm: number; finalLatitude?: number; finalLongitude?: number },
     auth: AuthContext,
-    correlationId: string
+    correlationId: string,
+    ifMatch?: number
   ) {
     const trip = await this.tripRepository.findById(tripId);
     if (!trip) {
@@ -329,6 +336,8 @@ export class TripService {
         "Solo el conductor asignado al viaje (DRIVER) puede finalizar el viaje."
       );
     }
+
+    assertIfMatch(trip.version, ifMatch);
 
     this.validateStateTransition(trip.state, TripState.COMPLETED, auth.role);
 
@@ -399,7 +408,8 @@ export class TripService {
     tripId: string,
     input: { reason: CancellationReasonValue; detail?: string },
     auth: AuthContext,
-    correlationId: string
+    correlationId: string,
+    ifMatch?: number
   ) {
     const trip = await this.tripRepository.findById(tripId);
     if (!trip) {
@@ -417,6 +427,8 @@ export class TripService {
         "Solo el cliente titular del viaje, el conductor asignado o un operador pueden cancelarlo."
       );
     }
+
+    assertIfMatch(trip.version, ifMatch);
 
     const cancelledBy = isOperator ? "OPERATOR" : isClientOwner ? "CLIENT" : "DRIVER";
 

@@ -5,6 +5,7 @@ import { ApiError, sendJsonResponse } from "../middlewares/error.middleware.js";
 import type { TripService } from "../services/trip.service.js";
 import { toTripResponse, toTripHistory } from "../mappers/trip.mapper.js";
 import { CANCELLATION_REASONS, isCancellationReason } from "../domain/cancellation-rules.js";
+import { parseIfMatch } from "../middlewares/preconditions.js";
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const VALID_STATES: TripState[] = [
@@ -48,11 +49,45 @@ function etagMatches(headerValue: string, etag: string): boolean {
     .some((v) => v === "*" || v === etag || v === `W/${etag}`);
 }
 
+/** Tamaño máximo del cuerpo (RNF-12): 16 KB. */
+const MAX_BODY_BYTES = 16 * 1024;
+
+function payloadTooLarge(): ApiError {
+  return new ApiError(
+    413,
+    "PAYLOAD_TOO_LARGE",
+    `El cuerpo supera el máximo permitido de ${MAX_BODY_BYTES} bytes (16 KB).`
+  );
+}
+
 async function parseJsonBody(req: http.IncomingMessage): Promise<any> {
+  // Rechazo rápido si el cliente ya declara un tamaño excesivo.
+  const declared = Number(req.headers["content-length"]);
+  if (Number.isFinite(declared) && declared > MAX_BODY_BYTES) {
+    req.resume();
+    throw payloadTooLarge();
+  }
+
   return new Promise((resolve, reject) => {
-    let data = "";
-    req.on("data", (chunk: Buffer) => (data += chunk.toString()));
+    const chunks: Buffer[] = [];
+    let size = 0;
+    let tooLarge = false;
+
+    req.on("data", (chunk: Buffer) => {
+      if (tooLarge) return;
+      size += chunk.length;
+      if (size > MAX_BODY_BYTES) {
+        tooLarge = true;
+        chunks.length = 0;
+        reject(payloadTooLarge());
+        return;
+      }
+      chunks.push(chunk);
+    });
+
     req.on("end", () => {
+      if (tooLarge) return;
+      const data = Buffer.concat(chunks).toString("utf-8");
       if (!data) return resolve({});
       try {
         resolve(JSON.parse(data));
@@ -179,6 +214,7 @@ export class TripController {
 
     sendJsonResponse(res, result.statusCode, responseBody, correlationId, {
       ETag: etagForVersion(result.trip.version),
+      ...(result.statusCode === 201 ? { Location: `/trips/${result.trip.id}` } : {}),
     });
   }
 
@@ -276,6 +312,7 @@ export class TripController {
 
   async markDriverArrived(
     tripId: string,
+    req: http.IncomingMessage,
     res: http.ServerResponse,
     auth: AuthContext,
     correlationId: string
@@ -283,8 +320,9 @@ export class TripController {
     if (!isValidUuid(tripId)) {
       throw new ApiError(400, "VALIDATION", "El identificador del viaje (id) debe tener formato UUID válido.");
     }
+    const ifMatch = parseIfMatch(req.headers["if-match"]);
 
-    const updated = await this.tripService.markDriverArrived(tripId, auth, correlationId);
+    const updated = await this.tripService.markDriverArrived(tripId, auth, correlationId, ifMatch);
     sendJsonResponse(res, 200, toTripResponse(updated), correlationId, {
       ETag: etagForVersion(updated.version),
     });
@@ -300,6 +338,7 @@ export class TripController {
     if (!isValidUuid(tripId)) {
       throw new ApiError(400, "VALIDATION", "El identificador del viaje (id) debe tener formato UUID válido.");
     }
+    const ifMatch = parseIfMatch(req.headers["if-match"]);
 
     const body = await parseJsonBody(req);
     const verificationToken = body?.verificationToken;
@@ -316,7 +355,8 @@ export class TripController {
       tripId,
       verificationToken.trim(),
       auth,
-      correlationId
+      correlationId,
+      ifMatch
     );
     sendJsonResponse(res, 200, toTripResponse(updated), correlationId, {
       ETag: etagForVersion(updated.version),
@@ -333,6 +373,7 @@ export class TripController {
     if (!isValidUuid(tripId)) {
       throw new ApiError(400, "VALIDATION", "El identificador del viaje (id) debe tener formato UUID válido.");
     }
+    const ifMatch = parseIfMatch(req.headers["if-match"]);
 
     const body = await parseJsonBody(req);
     const { distanceKm, finalLatitude, finalLongitude } = body;
@@ -364,7 +405,8 @@ export class TripController {
       tripId,
       { distanceKm, finalLatitude, finalLongitude },
       auth,
-      correlationId
+      correlationId,
+      ifMatch
     );
     sendJsonResponse(res, 200, toTripResponse(updated), correlationId, {
       ETag: etagForVersion(updated.version),
@@ -381,6 +423,7 @@ export class TripController {
     if (!isValidUuid(tripId)) {
       throw new ApiError(400, "VALIDATION", "El identificador del viaje (id) debe tener formato UUID válido.");
     }
+    const ifMatch = parseIfMatch(req.headers["if-match"]);
 
     const body = await parseJsonBody(req);
     const { reason, detail } = body ?? {};
@@ -400,7 +443,13 @@ export class TripController {
       });
     }
 
-    const updated = await this.tripService.cancelTrip(tripId, { reason, detail }, auth, correlationId);
+    const updated = await this.tripService.cancelTrip(
+      tripId,
+      { reason, detail },
+      auth,
+      correlationId,
+      ifMatch
+    );
     sendJsonResponse(res, 200, toTripResponse(updated), correlationId, {
       ETag: etagForVersion(updated.version),
     });
