@@ -325,7 +325,6 @@ Hay **un único evento de cancelación**. Quién canceló (`cancelledBy`), el mo
 | Límite de pedidos | Se cuenta en memoria dentro de cada proceso | Con varias instancias del servicio cada una cuenta por separado; con Redis sería compartido (RNF-12) |
 | Panel de demo (`/api/*`) | Los endpoints del panel (`seed`, `trips`, `transition`) no usan autenticación | Son solo para desarrollo; no deben exponerse en un entorno publicado |
 | Tests de integración | Hay tests unitarios (dominio, errores de autenticación, cabeceras, idempotencia, eventos y health), pero no tests que ejerciten los endpoints contra una base real | Los endpoints se verifican a mano con `curl` y con el panel de demo |
-| Dockerfile del backend | Solo el contenedor de PostgreSQL está definido | El backend se ejecuta localmente con `npm run dev` |
 
 ---
 
@@ -334,10 +333,12 @@ Hay **un único evento de cancelación**. Quién canceló (`cancelledBy`), el mo
 ```text
 .
 ├── openapi.yaml              Contrato de las interfaces síncronas y catálogo de eventos (RNF-03)
-├── docker-compose.yml        Contenedor OCI de PostgreSQL (RNF-04)
+├── docker-compose.yml        Servicios db (PostgreSQL) y backend (RNF-04)
+├── .dockerignore             Archivos que no entran a la imagen del backend
 ├── .env.example              Variables para Docker Compose (PostgreSQL)
 ├── frontend/                 Panel de demo (index.html) y Swagger UI (swagger.html)
 └── backend/
+    ├── Dockerfile            Imagen del backend (Node 22; aplica migraciones y arranca el servidor)
     ├── .env.example          Variables del servidor (RNF-06)
     ├── package.json          Dependencias y scripts (npm run dev, npm test)
     ├── prisma/
@@ -362,8 +363,29 @@ Hay **un único evento de cancelación**. Quién canceló (`cancelledBy`), el mo
 ## Guía de Instalación y Ejecución Local (RNF-04 y RNF-06)
 
 ### Prerrequisitos
-* **Node.js** v22.12 o superior (lo exige la versión de Vitest del proyecto)
-* **Docker y Docker Compose** (para ejecutar el motor PostgreSQL)
+* **Docker y Docker Compose** (siempre; levantan PostgreSQL y, si se quiere, el backend).
+* **Node.js** v22.12 o superior (solo para ejecutar el backend fuera de Docker, los tests y Prisma Studio; lo exige la versión de Vitest del proyecto).
+
+### Opción A: todo con Docker (sin instalar Node)
+
+Levanta PostgreSQL y el backend en contenedores. Desde la raíz del repositorio:
+
+1. Crear el archivo `.env` en la **raíz**, copiado de `.env.example`, con `POSTGRES_USER`, `POSTGRES_PASSWORD` y `POSTGRES_DB`. El `backend/.env` **no hace falta** en Docker: Compose le pasa al contenedor las variables que necesita (`DATABASE_URL` apuntando al servicio `db`, `PORT` y `ENABLE_DEMO_AUTH`).
+2. Construir y levantar:
+   ```bash
+   docker compose up -d --build
+   ```
+   Al arrancar, el contenedor del backend aplica las migraciones pendientes (`prisma migrate deploy`) y luego inicia el servidor.
+3. Verificar: `http://localhost:3006/health/details` debe responder `status: OK`. El panel visual está en `http://localhost:3006` y Swagger en `http://localhost:3006/docs`.
+4. Detener:
+   ```bash
+   docker compose down        # conserva los datos de la base
+   docker compose down -v     # borra también los datos (volumen m6_pgdata)
+   ```
+
+Si después se quiere correr el backend localmente con `npm run dev` (Opción B), primero hay que liberar el puerto 3006: `docker compose stop backend`.
+
+### Opción B: backend local con `npm run dev`
 
 ### Paso a paso
 
