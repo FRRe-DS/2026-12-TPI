@@ -128,17 +128,18 @@ export class TripController {
   ) {
     const body = await parseJsonBody(req);
 
-    // Soporta tanto el contrato estándar M6 (camelCase) como la propuesta de M5 (snake_case en español)
-    const isSpanishPayload = Boolean(body?.solicitud_id && !body?.requestId);
-    const requestId = body?.requestId ?? body?.solicitud_id;
-    const clientId = body?.clientId ?? body?.cliente_id;
-    const driverId = body?.driverId ?? body?.conductor_id;
-    const vehicleId = body?.vehicleId ?? body?.vehiculo_id;
-    const originLatitude = body?.originLatitude ?? body?.origen_latitud;
-    const originLongitude = body?.originLongitude ?? body?.origen_longitud;
-    const destinationLatitude = body?.destinationLatitude ?? body?.destino_latitud;
-    const destinationLongitude = body?.destinationLongitude ?? body?.destino_longitud;
-    const vehicleType = body?.vehicleType;
+    // Solo el contrato (CreateTripRequest, camelCase). Los campos sobrantes se ignoran.
+    const {
+      requestId,
+      clientId,
+      driverId,
+      vehicleId,
+      vehicleType,
+      originLatitude,
+      originLongitude,
+      destinationLatitude,
+      destinationLongitude,
+    } = body ?? {};
     const reservationId = body?.reservationId ?? null;
     const originAddress = body?.originAddress ?? null;
     const destinationAddress = body?.destinationAddress ?? null;
@@ -152,7 +153,7 @@ export class TripController {
       throw new ApiError(
         400,
         "VALIDATION",
-        "Los campos requestId (o solicitud_id), clientId (o cliente_id), driverId (o conductor_id) y vehicleId (o vehiculo_id) son obligatorios y deben tener formato UUID válido."
+        "Los campos requestId, clientId, driverId y vehicleId son obligatorios y deben tener formato UUID válido."
       );
     }
 
@@ -212,16 +213,7 @@ export class TripController {
       correlationId
     );
 
-    const responseBody = isSpanishPayload
-      ? {
-          ...result.trip,
-          viaje_id: result.trip.id,
-          solicitud_id: result.trip.requestId,
-          estado: "CREADO",
-        }
-      : toTripResponse(result.trip);
-
-    sendJsonResponse(res, result.statusCode, responseBody, correlationId, {
+    sendJsonResponse(res, result.statusCode, toTripResponse(result.trip), correlationId, {
       ETag: etagForVersion(result.trip.version),
       ...(result.statusCode === 201 ? { Location: `/trips/${result.trip.id}` } : {}),
     });

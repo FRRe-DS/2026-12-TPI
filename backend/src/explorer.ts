@@ -7,7 +7,7 @@ import { prisma } from "./config/database.js";
 import { tripService } from "./config/services.js";
 import { handleApiV1Router } from "./routes/trip.routes.js";
 import { eventPublisher } from "./services/event-publisher.service.js";
-import { createDemoJwt } from "./middlewares/auth.middleware.js";
+import { createDemoJwt, isDemoAuthEnabled } from "./middlewares/auth.middleware.js";
 
 // RNF-06: el puerto se configura por variable de entorno, con 3006 como valor por defecto.
 const PORT = Number(process.env.PORT ?? 3006);
@@ -60,6 +60,9 @@ const server = http.createServer(async (req: http.IncomingMessage, res: http.Ser
 
     // 3. Endpoints de soporte para el Panel Visual
     if (req.method === "GET" && url.pathname === "/api/demo-tokens") {
+      if (!isDemoAuthEnabled()) {
+        return sendJson(res, 404, { error: "Ruta no encontrada" });
+      }
       const lastTrip = await prisma.trip.findFirst({ orderBy: { createdAt: "desc" } });
       const clientId = lastTrip?.clientId || "c1111111-1111-4111-8111-111111111111";
       const driverId = lastTrip?.driverId || "d1111111-1111-4111-8111-111111111111";
