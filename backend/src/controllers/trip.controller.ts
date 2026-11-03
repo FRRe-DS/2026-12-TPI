@@ -116,8 +116,9 @@ export class TripController {
   ) {}
 
   async getHealth(_req: http.IncomingMessage, res: http.ServerResponse, correlationId: string) {
-    const status = await this.tripService.getHealthStatus();
-    sendJsonResponse(res, 200, status, correlationId);
+    // Liveness: no consulta dependencias (lo usa el HEALTHCHECK de Docker). El estado de PostgreSQL
+    // está en GET /health/details.
+    sendJsonResponse(res, 200, { status: "UP", timestamp: new Date().toISOString() }, correlationId);
   }
 
   async createTrip(

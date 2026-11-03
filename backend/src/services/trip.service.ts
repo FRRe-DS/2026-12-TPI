@@ -82,14 +82,6 @@ export class TripService {
     );
   }
 
-  async getHealthStatus() {
-    await this.tripRepository.checkDatabaseHealth();
-    return {
-      status: "UP",
-      timestamp: new Date().toISOString(),
-    };
-  }
-
   /**
    * RF-6.1 / RNF-08 / RNF-09: Crear nuevo viaje desde M5 con garantía de idempotencia.
    */

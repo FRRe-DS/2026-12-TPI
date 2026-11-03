@@ -1,8 +1,8 @@
 import http from "node:http";
 import crypto from "node:crypto";
 import { authenticateMiddleware } from "../middlewares/auth.middleware.js";
-import { ApiError, handleErrorMiddleware } from "../middlewares/error.middleware.js";
-import { tripController } from "../config/services.js";
+import { ApiError, handleErrorMiddleware, sendJsonResponse } from "../middlewares/error.middleware.js";
+import { tripController, healthService } from "../config/services.js";
 import { applyRateLimit } from "../middlewares/rate-limit.middleware.js";
 
 /**
@@ -16,6 +16,7 @@ export async function handleApiV1Router(
 ): Promise<boolean> {
   const isContractPath =
     url.pathname === "/health" ||
+    url.pathname === "/health/details" ||
     url.pathname === "/trips" ||
     url.pathname.startsWith("/trips/");
 
@@ -44,6 +45,13 @@ export async function handleApiV1Router(
     // 1. GET /api/v1/health (Público, sin requerir JWT)
     if (req.method === "GET" && subPath === "/health") {
       await tripController.getHealth(req, res, correlationId);
+      return true;
+    }
+
+    // 1b. GET /health/details (Público): readiness y diagnóstico de dependencias (RNF-14)
+    if (req.method === "GET" && subPath === "/health/details") {
+      const { statusCode, report } = await healthService.getDetails();
+      sendJsonResponse(res, statusCode, report, correlationId);
       return true;
     }
 
