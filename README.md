@@ -38,7 +38,7 @@ El contrato de la API (`openapi.yaml`) está **unificado con el Grupo 5**, que t
 * **ORM:** **Prisma ORM (v6.19)** — Definición declarativa del esquema (`backend/prisma/schema.prisma`), migraciones SQL versionadas (`backend/prisma/migrations`) y cliente tipado autogenerado en `backend/generated/prisma`.
 * **Contenedores:** **Docker Compose** — Entorno reproducible mediante imágenes OCI para la instancia de PostgreSQL (RNF-04).
 * **Contratos:** **OpenAPI 3.1.0** — Definición estandarizada de la interfaz REST del módulo, sus respuestas de error y los esquemas de eventos (RNF-03).
-* **Tests:** **Vitest** — Tests unitarios de la lógica de dominio y de los componentes transversales (`npm test`).
+* **Tests:** **Vitest** — Tests unitarios de la lógica de dominio y de los componentes transversales (`npm test`) y tests de integración que ejercitan los endpoints reales contra una base PostgreSQL de pruebas (`npm run test:integration`).
 
 ---
 
@@ -324,7 +324,7 @@ Hay **un único evento de cancelación**. Quién canceló (`cancelledBy`), el mo
 | RabbitMQ, Redis y outbox | No están integrados: `/health/details` los informa como `NOT_CONFIGURED` y `outbox` como `null` | Hasta entonces no hay entrega garantizada de eventos ni estado compartido entre instancias |
 | Límite de pedidos | Se cuenta en memoria dentro de cada proceso | Con varias instancias del servicio cada una cuenta por separado; con Redis sería compartido (RNF-12) |
 | Panel de demo (`/api/*`) | Los endpoints del panel (`seed`, `trips`, `transition`) no usan autenticación | Son solo para desarrollo; no deben exponerse en un entorno publicado |
-| Tests de integración | Hay tests unitarios (dominio, errores de autenticación, cabeceras, idempotencia, eventos y health), pero no tests que ejerciten los endpoints contra una base real | Los endpoints se verifican a mano con `curl` y con el panel de demo |
+| Casos sin test de integración | No hay tests de integración para el `413` (cuerpo mayor a 16 KB), el `429` (límite de pedidos) ni la caída de PostgreSQL en `/health/details` (`503`) | Esos casos se verifican a mano con `curl` |
 
 ---
 
@@ -340,7 +340,9 @@ Hay **un único evento de cancelación**. Quién canceló (`cancelledBy`), el mo
 └── backend/
     ├── Dockerfile            Imagen del backend (Node 22; aplica migraciones y arranca el servidor)
     ├── .env.example          Variables del servidor (RNF-06)
-    ├── package.json          Dependencias y scripts (npm run dev, npm test)
+    ├── package.json          Dependencias y scripts (npm run dev, npm test, npm run test:integration)
+    ├── vitest.config.ts      Configuración de `npm test` (solo tests unitarios)
+    ├── vitest.integration.config.ts  Configuración de `npm run test:integration` (base de tests, archivos en serie)
     ├── prisma/
     │   ├── schema.prisma     Modelos Trip, TripEventHistory e IdempotencyKey
     │   └── migrations/       Historial de migraciones SQL versionadas
@@ -355,7 +357,12 @@ Hay **un único evento de cancelación**. Quién canceló (`cancelledBy`), el mo
     │   ├── domain/           Máquina de estados y reglas de cancelación (lógica pura)
     │   ├── mappers/          Conversión de filas a los esquemas del contrato
     │   └── middlewares/      Autenticación, errores, precondiciones (If-Match) y límite de pedidos
-    └── tests/                Tests unitarios con Vitest
+    └── tests/
+      ├── *.test.ts         Tests unitarios (dominio, autenticación, cabeceras, idempotencia, eventos y health)
+      └── integration/      Tests de integración: servidor real y PostgreSQL de pruebas
+         ├── global-setup.ts  Crea y migra la base m6_trips_test una vez antes de los tests
+         ├── helpers.ts       Arranque del servidor, limpieza de tablas, cliente HTTP y atajos de creación
+         └── *.test.ts        Health y autenticación, creación y consulta, ciclo de vida, cancelación e idempotencia
 ```
 
 ---
@@ -444,8 +451,15 @@ Si después se quiere correr el backend localmente con `npm run dev` (Opción B)
 
 6. **Ejecutar los tests, desde `backend`:**
    ```bash
-   npm test
+   npm test                    # tests unitarios: no necesitan Docker ni base de datos
+   npm run test:integration    # tests de integración: necesitan PostgreSQL levantado (docker compose up -d db)
    ```
+   Los tests de integración levantan el servidor real en un puerto libre y lo ejercitan por HTTP contra una base **separada** llamada `m6_trips_test`, dentro del mismo PostgreSQL de Docker:
+   * La base de tests se **crea y migra sola** la primera vez (no hace falta ningún paso manual), y se vacía antes de cada test.
+   * **No tocan la base de desarrollo** (`m6_trips`): el nombre de la base de tests se calcula a partir de `DATABASE_URL` agregando el sufijo `_test`, y si no termina en `_test` los tests se detienen antes de borrar nada. Se puede indicar otra base con la variable `TEST_DATABASE_URL`.
+   * No chocan con el servidor de desarrollo ni con el contenedor del backend, porque usan su propio puerto.
+   * Cubren la creación idempotente de viajes, el ciclo `arrived`, `start` y `complete` (con `closure` y `durationSeconds`), la cancelación por rol y sus motivos, las precondiciones (`ETag`, `If-Match`, `If-None-Match`), `Idempotency-Key`, la autenticación, los permisos de lectura y `/health/details`.
+
    Para chequear los tipos sin ejecutar nada: `npx tsc --noEmit`.
 
 7. **(Opcional) Explorar las tablas visualmente con Prisma Studio:**
