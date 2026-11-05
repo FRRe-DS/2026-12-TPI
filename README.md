@@ -423,7 +423,7 @@ Si después se quiere correr el backend localmente con `npm run dev` (Opción B)
 
 3. **Levantar la base de datos PostgreSQL con Docker (RNF-04), desde la raíz del repositorio:**
    ```bash
-   docker compose up -d
+   docker compose up -d db
    ```
 
 4. **Generar el cliente de Prisma y aplicar las migraciones, desde `backend`:**
