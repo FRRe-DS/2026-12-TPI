@@ -32,7 +32,7 @@ function sendJson(res: http.ServerResponse, status: number, payload: unknown) {
   res.end(JSON.stringify(payload));
 }
 
-const server = http.createServer(async (req: http.IncomingMessage, res: http.ServerResponse) => {
+export const server = http.createServer(async (req: http.IncomingMessage, res: http.ServerResponse) => {
   const url = new URL(req.url || "/", `http://localhost:${PORT}`);
 
   try {
@@ -349,9 +349,12 @@ const server = http.createServer(async (req: http.IncomingMessage, res: http.Ser
   }
 });
 
-server.listen(PORT, () => {
-  console.log(`\n🚀 Servidor M6 corriendo en:`);
-  console.log(`   👉 Panel Visual de Persistencia: http://localhost:${PORT}`);
-  console.log(`   👉 Swagger UI (OpenAPI /api/v1): http://localhost:${PORT}/docs`);
-  console.log(`   👉 Health Check:                 http://localhost:${PORT}/health\n`);
-});
+// Vitest define NODE_ENV=test: en los tests el servidor lo levanta el propio test, en un puerto libre.
+if (process.env.NODE_ENV !== "test") {
+  server.listen(PORT, () => {
+    console.log(`\n🚀 Servidor M6 corriendo en:`);
+    console.log(`   👉 Panel Visual de Persistencia: http://localhost:${PORT}`);
+    console.log(`   👉 Swagger UI (OpenAPI /api/v1): http://localhost:${PORT}/docs`);
+    console.log(`   👉 Health Check:                 http://localhost:${PORT}/health\n`);
+  });
+}

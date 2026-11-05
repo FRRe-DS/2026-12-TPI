@@ -8,7 +8,8 @@
     "start": "tsx src/explorer.ts",
     "ui": "tsx src/explorer.ts",
     "explorer": "prisma db push && prisma generate && tsx src/explorer.ts",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:integration": "vitest run --config vitest.integration.config.ts"
   },
   "repository": {
     "type": "git",
