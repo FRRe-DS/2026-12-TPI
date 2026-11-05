@@ -102,3 +102,13 @@ export function newTripBody(overrides: Record<string, unknown> = {}) {
     ...overrides,
   };
 }
+
+/** Crea un viaje por la API (como M5, con el token SYSTEM) y devuelve el viaje y el cuerpo enviado. */
+export async function createTrip(overrides: Record<string, unknown> = {}) {
+  const body = newTripBody(overrides);
+  const res = await api("POST", "/trips", { token: tokens.system, body });
+  if (res.status !== 201) {
+    throw new Error(`createTrip: se esperaba 201 y llego ${res.status}: ${JSON.stringify(res.body)}`);
+  }
+  return { trip: res.body as any, body, res };
+}
