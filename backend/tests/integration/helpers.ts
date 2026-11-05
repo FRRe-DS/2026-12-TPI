@@ -112,3 +112,32 @@ export async function createTrip(overrides: Record<string, unknown> = {}) {
   }
   return { trip: res.body as any, body, res };
 }
+
+/**
+ * Lleva un viaje recién creado hasta un estado, usando al conductor asignado.
+ * Cada paso tiene que responder 200; si no, el test falla con el detalle.
+ */
+export async function advanceTrip(
+  trip: { id: string; driverId: string },
+  target: "DRIVER_ARRIVED" | "IN_PROGRESS" | "COMPLETED"
+): Promise<ApiResult> {
+  const token = tokens.driver(trip.driverId);
+  const steps: Array<{ action: string; body?: unknown }> = [{ action: "arrived" }];
+  if (target !== "DRIVER_ARRIVED") {
+    steps.push({ action: "start", body: { verificationToken: `qr-${crypto.randomUUID()}` } });
+  }
+  if (target === "COMPLETED") {
+    steps.push({ action: "complete", body: { distanceKm: 6.4 } });
+  }
+
+  let last!: ApiResult;
+  for (const step of steps) {
+    last = await api("POST", `/trips/${trip.id}/${step.action}`, { token, body: step.body });
+    if (last.status !== 200) {
+      throw new Error(
+        `advanceTrip: ${step.action} respondio ${last.status}: ${JSON.stringify(last.body)}`
+      );
+    }
+  }
+  return last;
+}
