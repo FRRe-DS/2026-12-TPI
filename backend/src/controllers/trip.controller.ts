@@ -3,6 +3,15 @@ import type { TripState } from "../../generated/prisma/client.js";
 import type { AuthContext } from "../middlewares/auth.middleware.js";
 import { ApiError, sendJsonResponse } from "../middlewares/error.middleware.js";
 import type { TripService } from "../services/trip.service.js";
+import { toTripResponse, toTripHistory } from "../mappers/trip.mapper.js";
+import { CANCELLATION_REASONS, isCancellationReason } from "../domain/cancellation-rules.js";
+import { parseIfMatch } from "../middlewares/preconditions.js";
+import type { Trip } from "../../generated/prisma/client.js";
+import {
+  fingerprintOf,
+  parseIdempotencyKey,
+  type IdempotencyService,
+} from "../services/idempotency.service.js";
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const VALID_STATES: TripState[] = [
@@ -10,24 +19,86 @@ const VALID_STATES: TripState[] = [
   "DRIVER_ARRIVED",
   "IN_PROGRESS",
   "COMPLETED",
-  "CANCELLED_BY_CLIENT",
-  "CANCELLED_BY_DRIVER",
+  "CANCELLED",
 ];
 
 function isValidUuid(value: unknown): value is string {
   return typeof value === "string" && UUID_REGEX.test(value);
 }
 
+/** Lee un parámetro `from`/`to` de la URL como fecha ISO 8601. */
+function parseDateParam(url: URL, name: "from" | "to"): Date | undefined {
+  const raw = url.searchParams.get(name);
+  if (!raw) return undefined;
+  const date = new Date(raw);
+  if (Number.isNaN(date.getTime())) {
+    throw new ApiError(400, "VALIDATION", `${name} debe ser una fecha ISO 8601 válida.`, {
+      errors: [{ field: name, message: "debe ser una fecha ISO 8601 válida" }],
+    });
+  }
+  return date;
+}
+
+/**
+ * ETag fuerte basado en la versión del viaje: cambia en cada transición (RNF-08).
+ * HTTP exige que el valor vaya entre comillas.
+ */
+function etagForVersion(version: number): string {
+  return `"${version}"`;
+}
+
+/** `If-None-Match` puede traer varios ETags separados por coma, o `*`. */
+function etagMatches(headerValue: string, etag: string): boolean {
+  return headerValue
+    .split(",")
+    .map((v) => v.trim())
+    .some((v) => v === "*" || v === etag || v === `W/${etag}`);
+}
+
+/** Tamaño máximo del cuerpo (RNF-12): 16 KB. */
+const MAX_BODY_BYTES = 16 * 1024;
+
+function payloadTooLarge(): ApiError {
+  return new ApiError(
+    413,
+    "PAYLOAD_TOO_LARGE",
+    `El cuerpo supera el máximo permitido de ${MAX_BODY_BYTES} bytes (16 KB).`
+  );
+}
+
 async function parseJsonBody(req: http.IncomingMessage): Promise<any> {
+  // Rechazo rápido si el cliente ya declara un tamaño excesivo.
+  const declared = Number(req.headers["content-length"]);
+  if (Number.isFinite(declared) && declared > MAX_BODY_BYTES) {
+    req.resume();
+    throw payloadTooLarge();
+  }
+
   return new Promise((resolve, reject) => {
-    let data = "";
-    req.on("data", (chunk: Buffer) => (data += chunk.toString()));
+    const chunks: Buffer[] = [];
+    let size = 0;
+    let tooLarge = false;
+
+    req.on("data", (chunk: Buffer) => {
+      if (tooLarge) return;
+      size += chunk.length;
+      if (size > MAX_BODY_BYTES) {
+        tooLarge = true;
+        chunks.length = 0;
+        reject(payloadTooLarge());
+        return;
+      }
+      chunks.push(chunk);
+    });
+
     req.on("end", () => {
+      if (tooLarge) return;
+      const data = Buffer.concat(chunks).toString("utf-8");
       if (!data) return resolve({});
       try {
         resolve(JSON.parse(data));
       } catch {
-        reject(new ApiError(400, "INVALID_JSON", "El cuerpo de la petición no es un JSON válido."));
+        reject(new ApiError(400, "VALIDATION", "El cuerpo de la petición no es un JSON válido."));
       }
     });
   });
@@ -39,11 +110,15 @@ async function parseJsonBody(req: http.IncomingMessage): Promise<any> {
  * delega la operación al `TripService` y formatea la respuesta HTTP.
  */
 export class TripController {
-  constructor(private readonly tripService: TripService) {}
+  constructor(
+    private readonly tripService: TripService,
+    private readonly idempotency: IdempotencyService
+  ) {}
 
   async getHealth(_req: http.IncomingMessage, res: http.ServerResponse, correlationId: string) {
-    const status = await this.tripService.getHealthStatus();
-    sendJsonResponse(res, 200, status, correlationId);
+    // Liveness: no consulta dependencias (lo usa el HEALTHCHECK de Docker). El estado de PostgreSQL
+    // está en GET /health/details.
+    sendJsonResponse(res, 200, { status: "UP", timestamp: new Date().toISOString() }, correlationId);
   }
 
   async createTrip(
@@ -54,16 +129,21 @@ export class TripController {
   ) {
     const body = await parseJsonBody(req);
 
-    // Soporta tanto el contrato estándar M6 (camelCase) como la propuesta de M5 (snake_case en español)
-    const isSpanishPayload = Boolean(body?.solicitud_id && !body?.requestId);
-    const requestId = body?.requestId ?? body?.solicitud_id;
-    const clientId = body?.clientId ?? body?.cliente_id;
-    const driverId = body?.driverId ?? body?.conductor_id;
-    const vehicleId = body?.vehicleId ?? body?.vehiculo_id;
-    const originLatitude = body?.originLatitude ?? body?.origen_latitud;
-    const originLongitude = body?.originLongitude ?? body?.origen_longitud;
-    const destinationLatitude = body?.destinationLatitude ?? body?.destino_latitud;
-    const destinationLongitude = body?.destinationLongitude ?? body?.destino_longitud;
+    // Solo el contrato (CreateTripRequest, camelCase). Los campos sobrantes se ignoran.
+    const {
+      requestId,
+      clientId,
+      driverId,
+      vehicleId,
+      vehicleType,
+      originLatitude,
+      originLongitude,
+      destinationLatitude,
+      destinationLongitude,
+    } = body ?? {};
+    const reservationId = body?.reservationId ?? null;
+    const originAddress = body?.originAddress ?? null;
+    const destinationAddress = body?.destinationAddress ?? null;
 
     if (
       !isValidUuid(requestId) ||
@@ -73,8 +153,8 @@ export class TripController {
     ) {
       throw new ApiError(
         400,
-        "INVALID_UUID_FIELDS",
-        "Los campos requestId (o solicitud_id), clientId (o cliente_id), driverId (o conductor_id) y vehicleId (o vehiculo_id) son obligatorios y deben tener formato UUID válido."
+        "VALIDATION",
+        "Los campos requestId, clientId, driverId y vehicleId son obligatorios y deben tener formato UUID válido."
       );
     }
 
@@ -94,9 +174,25 @@ export class TripController {
     ) {
       throw new ApiError(
         400,
-        "INVALID_COORDINATES",
+        "VALIDATION",
         "Las coordenadas de origen y destino son obligatorias y deben estar en rango válido (lat: -90..90, lng: -180..180)."
       );
+    }
+
+    if (vehicleType !== "CAR" && vehicleType !== "MOTORCYCLE") {
+      throw new ApiError(400, "VALIDATION", "El campo vehicleType es obligatorio y debe ser CAR o MOTORCYCLE.");
+    }
+
+    if (reservationId !== null && !isValidUuid(reservationId)) {
+      throw new ApiError(400, "VALIDATION", "reservationId debe ser un UUID válido o null.");
+    }
+
+    if (originAddress !== null && (typeof originAddress !== "string" || originAddress.length > 300)) {
+      throw new ApiError(400, "VALIDATION", "originAddress debe ser texto de hasta 300 caracteres o null.");
+    }
+
+    if (destinationAddress !== null && (typeof destinationAddress !== "string" || destinationAddress.length > 300)) {
+      throw new ApiError(400, "VALIDATION", "destinationAddress debe ser texto de hasta 300 caracteres o null.");
     }
 
     const result = await this.tripService.createTrip(
@@ -105,6 +201,10 @@ export class TripController {
         clientId,
         driverId,
         vehicleId,
+        vehicleType,
+        reservationId,
+        originAddress,
+        destinationAddress,
         originLatitude,
         originLongitude,
         destinationLatitude,
@@ -114,16 +214,10 @@ export class TripController {
       correlationId
     );
 
-    const responseBody = isSpanishPayload
-      ? {
-          ...result.trip,
-          viaje_id: result.trip.id,
-          solicitud_id: result.trip.requestId,
-          estado: "CREADO",
-        }
-      : result.trip;
-
-    sendJsonResponse(res, result.statusCode, responseBody, correlationId);
+    sendJsonResponse(res, result.statusCode, toTripResponse(result.trip), correlationId, {
+      ETag: etagForVersion(result.trip.version),
+      ...(result.statusCode === 201 ? { Location: `/trips/${result.trip.id}` } : {}),
+    });
   }
 
   async listTrips(
@@ -139,21 +233,37 @@ export class TripController {
     const pageSizeParam = url.searchParams.get("pageSize") ?? "20";
 
     if (clientIdParam && !isValidUuid(clientIdParam)) {
-      throw new ApiError(400, "INVALID_CLIENT_ID", "El parámetro clientId debe ser un UUID válido.");
+      throw new ApiError(400, "VALIDATION", "El parámetro clientId debe ser un UUID válido.");
     }
     if (driverIdParam && !isValidUuid(driverIdParam)) {
-      throw new ApiError(400, "INVALID_DRIVER_ID", "El parámetro driverId debe ser un UUID válido.");
+      throw new ApiError(400, "VALIDATION", "El parámetro driverId debe ser un UUID válido.");
     }
-    if (stateParam && !VALID_STATES.includes(stateParam as TripState)) {
-      throw new ApiError(400, "INVALID_STATE", `El parámetro state debe ser uno de: ${VALID_STATES.join(", ")}.`);
+
+    // `state` admite varios valores separados por coma: ?state=COMPLETED,CANCELLED
+    let states: TripState[] | undefined;
+    if (stateParam) {
+      const requested = stateParam.split(",").map((s) => s.trim());
+      const invalid = requested.filter((s) => !VALID_STATES.includes(s as TripState));
+      if (invalid.length > 0) {
+        throw new ApiError(
+          400,
+          "VALIDATION",
+          `El parámetro state tiene valores inválidos: ${invalid.join(", ")}. Valores permitidos: ${VALID_STATES.join(", ")}.`,
+          { errors: [{ field: "state", message: `valores permitidos: ${VALID_STATES.join(", ")}` }] }
+        );
+      }
+      states = requested as TripState[];
     }
+
+    const from = parseDateParam(url, "from");
+    const to = parseDateParam(url, "to");
 
     const page = Number(pageParam);
     const pageSize = Number(pageSizeParam);
     if (!Number.isInteger(page) || page < 1 || !Number.isInteger(pageSize) || pageSize < 1 || pageSize > 100) {
       throw new ApiError(
         400,
-        "INVALID_PAGINATION",
+        "VALIDATION",
         "Los parámetros de paginación deben cumplir page >= 1 y 1 <= pageSize <= 100."
       );
     }
@@ -162,7 +272,9 @@ export class TripController {
       {
         clientId: clientIdParam,
         driverId: driverIdParam,
-        state: stateParam as TripState | undefined,
+        states,
+        from,
+        to,
         page,
         pageSize,
       },
@@ -174,30 +286,80 @@ export class TripController {
 
   async getTripById(
     tripId: string,
+    req: http.IncomingMessage,
     res: http.ServerResponse,
     auth: AuthContext,
     correlationId: string
   ) {
     if (!isValidUuid(tripId)) {
-      throw new ApiError(400, "INVALID_TRIP_ID", "El identificador del viaje (id) debe tener formato UUID válido.");
+      throw new ApiError(400, "VALIDATION", "El identificador del viaje (id) debe tener formato UUID válido.");
     }
 
     const trip = await this.tripService.getTripById(tripId, auth);
-    sendJsonResponse(res, 200, trip, correlationId);
+    const etag = etagForVersion(trip.version);
+    const ifNoneMatch = req.headers["if-none-match"];
+
+    // GET condicional (RFC 9110): si el cliente ya tiene esta versión, no se le manda el cuerpo.
+    if (typeof ifNoneMatch === "string" && etagMatches(ifNoneMatch, etag)) {
+      res.writeHead(304, {
+        ETag: etag,
+        ...(correlationId ? { "X-Correlation-Id": correlationId } : {}),
+      });
+      res.end();
+      return;
+    }
+
+    sendJsonResponse(res, 200, toTripResponse(trip), correlationId, { ETag: etag });
+  }
+
+  /**
+   * Ejecuta una acción sobre el viaje y responde 200 con el viaje actualizado.
+   * Si viene `Idempotency-Key`, un reintento devuelve la respuesta guardada (con `Idempotent-Replayed: true`).
+   */
+  private async respondWithTrip(
+    req: http.IncomingMessage,
+    res: http.ServerResponse,
+    auth: AuthContext,
+    correlationId: string,
+    request: { path: string; body?: unknown },
+    execute: () => Promise<Trip>
+  ) {
+    const outcome = await this.idempotency.run({
+      key: parseIdempotencyKey(req.headers["idempotency-key"]),
+      actorId: auth.sub,
+      fingerprint: fingerprintOf("POST", request.path, request.body),
+      execute: async () => {
+        const trip = await execute();
+        return { status: 200, body: toTripResponse(trip), etag: etagForVersion(trip.version) };
+      },
+    });
+
+    sendJsonResponse(res, outcome.status, outcome.body, correlationId, {
+      ETag: outcome.etag,
+      ...(outcome.replayed ? { "Idempotent-Replayed": "true" } : {}),
+    });
   }
 
   async markDriverArrived(
     tripId: string,
+    req: http.IncomingMessage,
     res: http.ServerResponse,
     auth: AuthContext,
     correlationId: string
   ) {
     if (!isValidUuid(tripId)) {
-      throw new ApiError(400, "INVALID_TRIP_ID", "El identificador del viaje (id) debe tener formato UUID válido.");
+      throw new ApiError(400, "VALIDATION", "El identificador del viaje (id) debe tener formato UUID válido.");
     }
+    const ifMatch = parseIfMatch(req.headers["if-match"]);
 
-    const updated = await this.tripService.markDriverArrived(tripId, auth, correlationId);
-    sendJsonResponse(res, 200, updated, correlationId);
+    await this.respondWithTrip(
+      req,
+      res,
+      auth,
+      correlationId,
+      { path: `/trips/${tripId.toLowerCase()}/arrived` },
+      () => this.tripService.markDriverArrived(tripId, auth, correlationId, ifMatch)
+    );
   }
 
   async startTrip(
@@ -208,8 +370,9 @@ export class TripController {
     correlationId: string
   ) {
     if (!isValidUuid(tripId)) {
-      throw new ApiError(400, "INVALID_TRIP_ID", "El identificador del viaje (id) debe tener formato UUID válido.");
+      throw new ApiError(400, "VALIDATION", "El identificador del viaje (id) debe tener formato UUID válido.");
     }
+    const ifMatch = parseIfMatch(req.headers["if-match"]);
 
     const body = await parseJsonBody(req);
     const verificationToken = body?.verificationToken;
@@ -217,18 +380,19 @@ export class TripController {
     if (typeof verificationToken !== "string" || verificationToken.trim().length === 0) {
       throw new ApiError(
         400,
-        "MISSING_VERIFICATION_TOKEN",
+        "VALIDATION",
         "El campo verificationToken (código QR / token de un solo uso) es obligatorio."
       );
     }
 
-    const updated = await this.tripService.startTrip(
-      tripId,
-      verificationToken.trim(),
+    await this.respondWithTrip(
+      req,
+      res,
       auth,
-      correlationId
+      correlationId,
+      { path: `/trips/${tripId.toLowerCase()}/start`, body },
+      () => this.tripService.startTrip(tripId, verificationToken.trim(), auth, correlationId, ifMatch)
     );
-    sendJsonResponse(res, 200, updated, correlationId);
   }
 
   async completeTrip(
@@ -239,33 +403,51 @@ export class TripController {
     correlationId: string
   ) {
     if (!isValidUuid(tripId)) {
-      throw new ApiError(400, "INVALID_TRIP_ID", "El identificador del viaje (id) debe tener formato UUID válido.");
+      throw new ApiError(400, "VALIDATION", "El identificador del viaje (id) debe tener formato UUID válido.");
     }
+    const ifMatch = parseIfMatch(req.headers["if-match"]);
 
     const body = await parseJsonBody(req);
-    const { distanceKm, durationMinutes } = body;
+    const { distanceKm, finalLatitude, finalLongitude } = body;
 
-    if (
-      typeof distanceKm !== "number" ||
-      distanceKm < 0.1 ||
-      typeof durationMinutes !== "number" ||
-      !Number.isInteger(durationMinutes) ||
-      durationMinutes < 1
-    ) {
+    if (typeof distanceKm !== "number" || !Number.isFinite(distanceKm) || distanceKm < 0.1) {
       throw new ApiError(
         400,
-        "INVALID_COMPLETION_METRICS",
-        "Datos inválidos: se requiere distanceKm (>= 0.1) y durationMinutes (entero >= 1)."
+        "VALIDATION",
+        "Datos inválidos: se requiere distanceKm (número mayor o igual a 0.1).",
+        { errors: [{ field: "distanceKm", message: "debe ser mayor o igual a 0.1" }] }
       );
     }
 
-    const updated = await this.tripService.completeTrip(
-      tripId,
-      { distanceKm, durationMinutes },
+    if (
+      finalLatitude !== undefined &&
+      (typeof finalLatitude !== "number" || finalLatitude < -90 || finalLatitude > 90)
+    ) {
+      throw new ApiError(400, "VALIDATION", "finalLatitude debe ser un número entre -90 y 90.");
+    }
+
+    if (
+      finalLongitude !== undefined &&
+      (typeof finalLongitude !== "number" || finalLongitude < -180 || finalLongitude > 180)
+    ) {
+      throw new ApiError(400, "VALIDATION", "finalLongitude debe ser un número entre -180 y 180.");
+    }
+
+    await this.respondWithTrip(
+      req,
+      res,
       auth,
-      correlationId
+      correlationId,
+      { path: `/trips/${tripId.toLowerCase()}/complete`, body },
+      () =>
+        this.tripService.completeTrip(
+          tripId,
+          { distanceKm, finalLatitude, finalLongitude },
+          auth,
+          correlationId,
+          ifMatch
+        )
     );
-    sendJsonResponse(res, 200, updated, correlationId);
   }
 
   async cancelTrip(
@@ -276,22 +458,36 @@ export class TripController {
     correlationId: string
   ) {
     if (!isValidUuid(tripId)) {
-      throw new ApiError(400, "INVALID_TRIP_ID", "El identificador del viaje (id) debe tener formato UUID válido.");
+      throw new ApiError(400, "VALIDATION", "El identificador del viaje (id) debe tener formato UUID válido.");
     }
+    const ifMatch = parseIfMatch(req.headers["if-match"]);
 
     const body = await parseJsonBody(req);
-    const reason = typeof body?.reason === "string" ? body.reason.trim() : "";
+    const { reason, detail } = body ?? {};
 
-    if (reason.length < 3 || reason.length > 255) {
+    if (!isCancellationReason(reason)) {
       throw new ApiError(
         400,
-        "INVALID_CANCEL_REASON",
-        "El motivo de cancelación (reason) es obligatorio y debe tener entre 3 y 255 caracteres."
+        "VALIDATION",
+        `El campo reason es obligatorio y debe ser uno de: ${CANCELLATION_REASONS.join(", ")}.`,
+        { errors: [{ field: "reason", message: `valores permitidos: ${CANCELLATION_REASONS.join(", ")}` }] }
       );
     }
 
-    const updated = await this.tripService.cancelTrip(tripId, reason, auth, correlationId);
-    sendJsonResponse(res, 200, updated, correlationId);
+    if (detail !== undefined && (typeof detail !== "string" || detail.length > 500)) {
+      throw new ApiError(400, "VALIDATION", "detail debe ser un texto de hasta 500 caracteres.", {
+        errors: [{ field: "detail", message: "debe ser un texto de hasta 500 caracteres" }],
+      });
+    }
+
+    await this.respondWithTrip(
+      req,
+      res,
+      auth,
+      correlationId,
+      { path: `/trips/${tripId.toLowerCase()}/cancel`, body },
+      () => this.tripService.cancelTrip(tripId, { reason, detail }, auth, correlationId, ifMatch)
+    );
   }
 
   async getTripHistory(
@@ -301,10 +497,10 @@ export class TripController {
     correlationId: string
   ) {
     if (!isValidUuid(tripId)) {
-      throw new ApiError(400, "INVALID_TRIP_ID", "El identificador del viaje (id) debe tener formato UUID válido.");
+      throw new ApiError(400, "VALIDATION", "El identificador del viaje (id) debe tener formato UUID válido.");
     }
 
     const history = await this.tripService.getTripHistory(tripId, auth);
-    sendJsonResponse(res, 200, history, correlationId);
+        sendJsonResponse(res, 200, toTripHistory(tripId, history), correlationId);
   }
 }

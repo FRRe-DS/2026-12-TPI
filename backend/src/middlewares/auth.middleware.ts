@@ -36,6 +36,14 @@ function normalizeRole(rawRole: unknown, rawRolesArray?: unknown): ActorRole | n
 }
 
 /**
+ * Atajos de demo: header `X-Actor-Role` / `X-Actor-Id` sin token y tokens rápidos
+ * (`Bearer SYSTEM`, `Bearer DRIVER:<id>`). Solo se habilitan con ENABLE_DEMO_AUTH=true.
+ */
+export function isDemoAuthEnabled(): boolean {
+  return process.env.ENABLE_DEMO_AUTH === "true";
+}
+
+/**
  * Genera un token JWT de demostración con claims `sub`, `role` y `roles` (M1) para pruebas en Swagger UI / Postman.
  */
 export function createDemoJwt(sub: string, role: ActorRole): string {
@@ -64,14 +72,17 @@ export function createDemoJwt(sub: string, role: ActorRole): string {
 
 /**
  * Middleware de autenticación que valida el esquema `bearerAuth` (JWT de M1) según `openapi.yaml`.
- * Soporta tanto `role: "SYSTEM"` como `roles: ["SERVICIO"]` para compatibilidad con M2.
+ * El token debe traer `exp` y no estar vencido (RNF-12). Soporta tanto `role: "SYSTEM"` como
+ * `roles: ["SERVICIO"]` para compatibilidad con M2.
  */
 export function authenticateMiddleware(req: http.IncomingMessage): AuthContext {
+  const demo = isDemoAuthEnabled();
   const authHeader = req.headers["authorization"];
   const fallbackRole = req.headers["x-actor-role"] as string | undefined;
   const fallbackSub = req.headers["x-actor-id"] as string | undefined;
 
-  if (!authHeader && fallbackRole) {
+  // Atajo de demo 1: rol por header, sin token.
+  if (demo && !authHeader && fallbackRole) {
     const mapped = normalizeRole(fallbackRole);
     if (mapped) {
       return {
@@ -84,35 +95,37 @@ export function authenticateMiddleware(req: http.IncomingMessage): AuthContext {
   if (!authHeader || !authHeader.startsWith("Bearer ")) {
     throw new ApiError(
       401,
-      "UNAUTHORIZED",
+      "UNAUTHENTICATED",
       "Token JWT ausente o formato inválido. Se requiere header Authorization: Bearer <token> (M1)."
     );
   }
 
   const token = authHeader.slice("Bearer ".length).trim();
   if (!token) {
-    throw new ApiError(401, "UNAUTHORIZED", "Token JWT vacío.");
+    throw new ApiError(401, "UNAUTHENTICATED", "Token JWT vacío.");
   }
 
-  // Soporte de tokens rápidos en Swagger ("SYSTEM", "SERVICIO", "DRIVER:<uuid>", etc.)
-  const directRole = normalizeRole(token);
-  if (directRole) {
-    return {
-      sub: fallbackSub || "00000000-0000-4000-8000-000000000000",
-      role: directRole,
-    };
-  }
-  if (token.includes(":")) {
-    const [r, id] = token.split(":");
-    const mapped = normalizeRole(r);
-    if (mapped && id) {
-      return { sub: id.trim(), role: mapped };
+  // Atajo de demo 2: tokens rápidos ("SYSTEM", "SERVICIO", "DRIVER:<uuid>", etc.).
+  if (demo) {
+    const directRole = normalizeRole(token);
+    if (directRole) {
+      return {
+        sub: fallbackSub || "00000000-0000-4000-8000-000000000000",
+        role: directRole,
+      };
+    }
+    if (token.includes(":")) {
+      const [r, id] = token.split(":");
+      const mapped = normalizeRole(r);
+      if (mapped && id) {
+        return { sub: id.trim(), role: mapped };
+      }
     }
   }
 
   const parts = token.split(".");
   if (parts.length < 2 || !parts[1]) {
-    throw new ApiError(401, "INVALID_TOKEN", "El token JWT proporcionado no tiene una estructura válida.");
+    throw new ApiError(401, "UNAUTHENTICATED", "El token JWT proporcionado no tiene una estructura válida.");
   }
 
   try {
@@ -123,13 +136,17 @@ export function authenticateMiddleware(req: http.IncomingMessage): AuthContext {
     if (!role || !VALID_ROLES.includes(role)) {
       throw new ApiError(
         401,
-        "INVALID_TOKEN_CLAIMS",
+        "UNAUTHENTICATED",
         "El token JWT no contiene un claim 'role' o 'roles' válido (CLIENT/CLIENTE, DRIVER/CONDUCTOR, OPERATOR/OPERADOR, SYSTEM/SERVICIO)."
       );
     }
 
-    if (decoded.exp && typeof decoded.exp === "number" && decoded.exp * 1000 < Date.now()) {
-      throw new ApiError(401, "TOKEN_EXPIRED", "El token JWT ha expirado.");
+    // RNF-12: el token debe tener vencimiento; sin `exp`, o vencido, es 401.
+    if (typeof decoded.exp !== "number" || !Number.isFinite(decoded.exp)) {
+      throw new ApiError(401, "UNAUTHENTICATED", "El token JWT no tiene vencimiento (claim 'exp').");
+    }
+    if (decoded.exp * 1000 < Date.now()) {
+      throw new ApiError(401, "UNAUTHENTICATED", "El token JWT ha expirado.");
     }
 
     return {
@@ -138,6 +155,6 @@ export function authenticateMiddleware(req: http.IncomingMessage): AuthContext {
     };
   } catch (err) {
     if (err instanceof ApiError) throw err;
-    throw new ApiError(401, "INVALID_TOKEN", "No se pudo decodificar el payload del token JWT.");
+    throw new ApiError(401, "UNAUTHENTICATED", "No se pudo decodificar el payload del token JWT.");
   }
 }
