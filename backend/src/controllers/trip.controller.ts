@@ -179,8 +179,8 @@ export class TripController {
       );
     }
 
-    if (vehicleType !== "CAR" && vehicleType !== "MOTORCYCLE") {
-      throw new ApiError(400, "VALIDATION", "El campo vehicleType es obligatorio y debe ser CAR o MOTORCYCLE.");
+    if (vehicleType !== "AUTO" && vehicleType !== "MOTO") {
+      throw new ApiError(400, "VALIDATION", "El campo vehicleType es obligatorio y debe ser AUTO o MOTO.");
     }
 
     if (reservationId !== null && !isValidUuid(reservationId)) {

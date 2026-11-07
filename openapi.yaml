@@ -807,7 +807,7 @@ components:
 
     VehicleType:
       type: string
-      enum: [CAR, MOTORCYCLE]
+      enum: [AUTO, MOTO]
 
     CancellationReason:
       type: string
@@ -1066,7 +1066,7 @@ components:
         clientId: 3f1b2c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d
         driverId: 9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d
         vehicleId: 1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5e
-        vehicleType: CAR
+        vehicleType: AUTO
         originLatitude: -34.6037
         originLongitude: -58.3816
         destinationLatitude: -34.5889

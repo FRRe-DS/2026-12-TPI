@@ -94,7 +94,7 @@ export function newTripBody(overrides: Record<string, unknown> = {}) {
     clientId: crypto.randomUUID(),
     driverId: crypto.randomUUID(),
     vehicleId: crypto.randomUUID(),
-    vehicleType: "CAR",
+    vehicleType: "AUTO",
     originLatitude: -27.4514,
     originLongitude: -58.9792,
     destinationLatitude: -27.4512,
