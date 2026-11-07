@@ -25,8 +25,8 @@ enum TripState {
 }
 
 enum VehicleType {
-  CAR
-  MOTORCYCLE
+  AUTO
+  MOTO
 
   @@map("vehicle_type")
 }

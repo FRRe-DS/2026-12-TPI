@@ -9,7 +9,7 @@ const baseTrip = {
   clientId: 'c1111111-1111-4111-8111-111111111111',
   driverId: 'd1111111-1111-4111-8111-111111111111',
   vehicleId: 'a1111111-1111-4111-8111-111111111111',
-  vehicleType: 'CAR' as const,
+  vehicleType: 'AUTO' as const,
   reservationId: null,
   originLatitude: -27.45,
   originLongitude: -58.98,
@@ -22,7 +22,7 @@ const baseTrip = {
 describe('Payload de TripCreated', () => {
   it('incluye vehicleType, coordenadas y reservationId null', () => {
     const p = buildTripCreatedPayload(baseTrip);
-    expect(p.vehicleType).toBe('CAR');
+    expect(p.vehicleType).toBe('AUTO');
     expect(p.reservationId).toBeNull();
     expect(p.originLatitude).toBe(-27.45);
   });
@@ -48,7 +48,7 @@ describe('Payload de TripCompleted', () => {
       durationSeconds: 630,
       durationMinutes: 11,
     });
-    expect(p.vehicleType).toBe('CAR');
+    expect(p.vehicleType).toBe('AUTO');
     expect(p.closure).toEqual({ distanceKm: 6.4, durationSeconds: 630 });
     expect(p.durationMinutes).toBe(11);
     expect(p.startedAt).toBe('2026-11-02T12:00:00.000Z');
