@@ -324,7 +324,7 @@ Hay **un único evento de cancelación**. Quién canceló (`cancelledBy`), el mo
 | RabbitMQ, Redis y outbox | No están integrados: `/health/details` los informa como `NOT_CONFIGURED` y `outbox` como `null` | Hasta entonces no hay entrega garantizada de eventos ni estado compartido entre instancias |
 | Límite de pedidos | Se cuenta en memoria dentro de cada proceso | Con varias instancias del servicio cada una cuenta por separado; con Redis sería compartido (RNF-12) |
 | Panel de demo (`/api/*`) | Los endpoints del panel (`seed`, `trips`, `transition`) no usan autenticación | Son solo para desarrollo; no deben exponerse en un entorno publicado |
-| Casos sin test de integración | No hay tests de integración para el `413` (cuerpo mayor a 16 KB), el `429` (límite de pedidos) ni la caída de PostgreSQL en `/health/details` (`503`) | Esos casos se verifican a mano con `curl` |
+| Caída real de PostgreSQL sin test automático | El `503` de `/health/details` se prueba con una falla simulada (`spyOn` sobre la consulta a la base); ningún test apaga PostgreSQL de verdad | Se verifica a mano: `docker compose stop db` y `curl.exe -i http://localhost:3006/health/details` (debe dar `503`) |
 
 ---
 
@@ -362,7 +362,7 @@ Hay **un único evento de cancelación**. Quién canceló (`cancelledBy`), el mo
       └── integration/      Tests de integración: servidor real y PostgreSQL de pruebas
          ├── global-setup.ts  Crea y migra la base m6_trips_test una vez antes de los tests
          ├── helpers.ts       Arranque del servidor, limpieza de tablas, cliente HTTP y atajos de creación
-         └── *.test.ts        Health y autenticación, creación y consulta, ciclo de vida, cancelación e idempotencia
+         └── *.test.ts        Health y autenticación, creación y consulta, ciclo de vida, cancelación, idempotencia, límite de cuerpo, límite de pedidos y falla de health
 ```
 
 ---
@@ -458,7 +458,7 @@ Si después se quiere correr el backend localmente con `npm run dev` (Opción B)
    * La base de tests se **crea y migra sola** la primera vez (no hace falta ningún paso manual), y se vacía antes de cada test.
    * **No tocan la base de desarrollo** (`m6_trips`): el nombre de la base de tests se calcula a partir de `DATABASE_URL` agregando el sufijo `_test`, y si no termina en `_test` los tests se detienen antes de borrar nada. Se puede indicar otra base con la variable `TEST_DATABASE_URL`.
    * No chocan con el servidor de desarrollo ni con el contenedor del backend, porque usan su propio puerto.
-   * Cubren la creación idempotente de viajes, el ciclo `arrived`, `start` y `complete` (con `closure` y `durationSeconds`), la cancelación por rol y sus motivos, las precondiciones (`ETag`, `If-Match`, `If-None-Match`), `Idempotency-Key`, la autenticación, los permisos de lectura y `/health/details`.
+   * Cubren la creación idempotente de viajes, el ciclo `arrived`, `start` y `complete` (con `closure` y `durationSeconds`), la cancelación por rol y sus motivos, las precondiciones (`ETag`, `If-Match`, `If-None-Match`), `Idempotency-Key`, los límites de tamaño del cuerpo (`413`) y de pedidos (`429`), la autenticación, los permisos de lectura y `/health/details` (incluido el `503` cuando PostgreSQL falla, simulado en el test).
 
    Para chequear los tipos sin ejecutar nada: `npx tsc --noEmit`.
 
