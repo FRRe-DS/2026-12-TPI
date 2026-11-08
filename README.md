@@ -467,6 +467,21 @@ Si después se quiere correr el backend localmente con `npm run dev` (Opción B)
    npx prisma studio
    ```
 
+### Cómo correr los tests de cada requisito
+
+Cada requisito funcional tiene su propio test, con el nombre `rf-6.x-...`. Todos los comandos se corren **desde `backend`**. Los unitarios no necesitan Docker; los de integración necesitan PostgreSQL levantado (`docker compose up -d db`, desde la raíz del repo).
+
+| Requisito | Test unitario | Test de integración |
+| :--- | :--- | :--- |
+| RF-6.1 Estados del viaje | `npx vitest run tests/rf-6.1-estados-viaje.test.ts` | `npx vitest run --config vitest.integration.config.ts tests/integration/rf-6.1-estados-viaje.test.ts` |
+
+> **Para el equipo:** cuando termines el test de tu requisito, agregá tu fila a esta tabla con el mismo formato. Si tu requisito tiene un solo tipo de test (solo unitario o solo integración), poné `—` en la otra columna. Para correr todo: `npm test` y `npm run test:integration`.
+
+**Qué cubre el RF-6.1:**
+* **Unitario:** la máquina de estados completa (5 estados × 5 destinos × 4 roles): las 10 transiciones permitidas, las 14 rechazadas por rol (`403`) y las 76 ilegales (`409`); los estados terminales, el rol `SYSTEM`, `getAllowedTransitions` y que los estados coincidan con el contrato (`openapi.yaml`) y con el enum de Prisma.
+* **Integración:** lo mismo por HTTP con la base real: el ciclo completo, cada acción (`arrived`, `start`, `complete`, `cancel`) desde cada estado, quién puede ejecutarla, que un rechazo no cambie el estado ni deje historial ni eventos, el `404` de viaje inexistente y la concurrencia de dos `arrived` simultáneos.
+* **Lo que no cubre, a propósito:** el QR (RF-6.4), el cierre del viaje (RF-6.5), los motivos de cancelación (RF-6.6 y RF-6.7) y la forma del historial (RF-6.8), que tienen su propio test.
+
 ### Probar la API desde la terminal
 
 Con `ENABLE_DEMO_AUTH=true`, el token rápido `SYSTEM` permite consultar sin un JWT real. Por ejemplo (en PowerShell se usa `curl.exe`, no `curl`):
