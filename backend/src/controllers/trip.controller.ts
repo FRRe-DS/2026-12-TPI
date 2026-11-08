@@ -3,10 +3,10 @@ import type { TripState } from "../../generated/prisma/client.js";
 import type { AuthContext } from "../middlewares/auth.middleware.js";
 import { ApiError, sendJsonResponse } from "../middlewares/error.middleware.js";
 import type { TripService } from "../services/trip.service.js";
-import { toTripResponse, toTripHistory } from "../mappers/trip.mapper.js";
+import { toTripResponse, toTripHistory, toTripRatingResponse } from "../mappers/trip.mapper.js";
 import { CANCELLATION_REASONS, isCancellationReason } from "../domain/cancellation-rules.js";
 import { parseIfMatch } from "../middlewares/preconditions.js";
-import type { Trip } from "../../generated/prisma/client.js";
+import type { Trip, RatingAuthor } from "../../generated/prisma/client.js";
 import {
   fingerprintOf,
   parseIdempotencyKey,
@@ -502,5 +502,36 @@ export class TripController {
 
     const history = await this.tripService.getTripHistory(tripId, auth);
         sendJsonResponse(res, 200, toTripHistory(tripId, history), correlationId);
+  }
+
+  async rateTrip(
+    tripId: string,
+    ratedBy: RatingAuthor,
+    req: http.IncomingMessage,
+    res: http.ServerResponse,
+    auth: AuthContext,
+    correlationId: string
+  ) {
+    if (!isValidUuid(tripId)) {
+      throw new ApiError(400, "VALIDATION", "El identificador del viaje (id) debe tener formato UUID válido.");
+    }
+
+    const body = await parseJsonBody(req);
+    const { score, comment } = body ?? {};
+
+    if (typeof score !== "number" || !Number.isInteger(score) || score < 1 || score > 5) {
+      throw new ApiError(400, "VALIDATION", "score es obligatorio y debe ser un entero entre 1 y 5.", {
+        errors: [{ field: "score", message: "debe ser un entero entre 1 y 5" }],
+      });
+    }
+
+    if (comment !== undefined && comment !== null && (typeof comment !== "string" || comment.length > 500)) {
+      throw new ApiError(400, "VALIDATION", "comment debe ser un texto de hasta 500 caracteres.", {
+        errors: [{ field: "comment", message: "debe ser un texto de hasta 500 caracteres" }],
+      });
+    }
+
+    const rating = await this.tripService.rateTrip(tripId, ratedBy, { score, comment }, auth, correlationId);
+    sendJsonResponse(res, 201, toTripRatingResponse(rating), correlationId);
   }
 }

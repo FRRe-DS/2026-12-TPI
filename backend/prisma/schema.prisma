@@ -64,6 +64,13 @@ enum TripAction {
   @@map("trip_action")
 }
 
+enum RatingAuthor {
+  CLIENT
+  DRIVER
+
+  @@map("rating_author")
+}
+
 model Trip {
   id                   String             @id @default(uuid()) @db.Uuid
   requestId            String             @unique @map("request_id") @db.Uuid
@@ -97,6 +104,7 @@ model Trip {
   createdAt            DateTime           @default(now()) @map("created_at")
   updatedAt            DateTime           @updatedAt @map("updated_at")
   events               TripEventHistory[]
+  ratings              TripRating[]
 
   @@index([clientId])
   @@index([driverId, state])
@@ -121,6 +129,21 @@ model TripEventHistory {
   @@unique([tripId, sequence])
   @@index([tripId, createdAt])
   @@map("trip_event_history")
+}
+
+model TripRating {
+  id        String       @id @default(uuid()) @db.Uuid
+  tripId    String       @map("trip_id") @db.Uuid
+  trip      Trip         @relation(fields: [tripId], references: [id])
+  ratedBy   RatingAuthor @map("rated_by")
+  raterId   String       @map("rater_id") @db.Uuid
+  ratedId   String       @map("rated_id") @db.Uuid
+  score     Int
+  comment   String?      @db.VarChar(500)
+  createdAt DateTime     @default(now()) @map("created_at")
+
+  @@unique([tripId, ratedBy])
+  @@map("trip_ratings")
 }
 
 model IdempotencyKey {

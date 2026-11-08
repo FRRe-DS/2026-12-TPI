@@ -15,6 +15,8 @@ export type ErrorCode =
   | "PRECONDITION_FAILED"
   | "INVALID_VERIFICATION_CODE"
   | "REASON_NOT_ALLOWED"
+  | "TRIP_NOT_COMPLETED"
+  | "ALREADY_RATED"
   | "IDEMPOTENCY_KEY_REUSED"
   | "TOO_MANY_REQUESTS"
   | "DEPENDENCY_UNAVAILABLE"
@@ -60,6 +62,8 @@ const TITLES: Record<ErrorCode, string> = {
   PRECONDITION_FAILED: "Precondición fallida",
   INVALID_VERIFICATION_CODE: "Código de verificación inválido",
   REASON_NOT_ALLOWED: "Motivo no permitido",
+  TRIP_NOT_COMPLETED: "Viaje no finalizado",
+  ALREADY_RATED: "Calificación ya registrada",
   IDEMPOTENCY_KEY_REUSED: "Idempotency-Key reutilizada",
   TOO_MANY_REQUESTS: "Demasiados pedidos",
   DEPENDENCY_UNAVAILABLE: "Dependencia no disponible",

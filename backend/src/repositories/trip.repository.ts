@@ -1,4 +1,4 @@
-import { PrismaClient, TripState, ActorRole, VehicleType, CancellationReason, TripAction } from "../../generated/prisma/client.js";
+import { PrismaClient, TripState, ActorRole, VehicleType, CancellationReason, TripAction, RatingAuthor } from "../../generated/prisma/client.js";
 
 export interface CreateTripRepoInput {
   requestId: string;
@@ -45,6 +45,15 @@ export interface TransitionTripRepoInput {
   cancelledFromState?: TripState;
   requiresRedispatch?: boolean;
   metadata?: Record<string, unknown>;
+}
+
+export interface CreateTripRatingRepoInput {
+  tripId: string;
+  ratedBy: RatingAuthor;
+  raterId: string;
+  ratedId: string;
+  score: number;
+  comment?: string | null;
 }
 
 /**
@@ -234,6 +243,34 @@ export class TripRepository {
     return this.db.tripEventHistory.findMany({
       where: { tripId },
       orderBy: { sequence: "asc" },
+    });
+  }
+
+  /**
+   * Guarda la calificación de un viaje (RF-6.5). Devuelve null si ese lado ya había calificado:
+   * el índice único (trip_id, rated_by) lo impide incluso ante pedidos concurrentes (RNF-08).
+   */
+  async createRating(input: CreateTripRatingRepoInput) {
+    const result = await this.db.tripRating.createMany({
+      data: [
+        {
+          tripId: input.tripId,
+          ratedBy: input.ratedBy,
+          raterId: input.raterId,
+          ratedId: input.ratedId,
+          score: input.score,
+          comment: input.comment ?? null,
+        },
+      ],
+      skipDuplicates: true,
+    });
+
+    if (result.count === 0) {
+      return null;
+    }
+
+    return this.db.tripRating.findUniqueOrThrow({
+      where: { tripId_ratedBy: { tripId: input.tripId, ratedBy: input.ratedBy } },
     });
   }
 }
