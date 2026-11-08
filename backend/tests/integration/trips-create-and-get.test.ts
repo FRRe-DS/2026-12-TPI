@@ -38,7 +38,7 @@ describe("POST /trips (integracion)", () => {
       clientId: body.clientId,
       driverId: body.driverId,
       vehicleId: body.vehicleId,
-      vehicleType: "CAR",
+      vehicleType: "AUTO",
       state: "PENDING_ARRIVAL",
       version: 1,
     });
