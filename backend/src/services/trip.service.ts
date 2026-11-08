@@ -2,6 +2,7 @@ import type { TripState as PrismaTripState } from "../../generated/prisma/client
 import type { AuthContext } from "../middlewares/auth.middleware.js";
 import { ApiError } from "../middlewares/error.middleware.js";
 import type { TripRepository, CreateTripRepoInput } from "../repositories/trip.repository.js";
+import type { RatingAuthor } from "../../generated/prisma/client.js";
 import { toTripSummary } from "../mappers/trip.mapper.js";
 import { assertIfMatch } from "../middlewares/preconditions.js";
 import {
@@ -507,5 +508,71 @@ export class TripService {
     }
 
     return this.tripRepository.findEventHistoryByTripId(tripId);
+  }
+
+  /**
+   * RF-6.5: calificación posterior al viaje. El cliente califica al conductor (ratedBy = CLIENT)
+   * y el conductor al cliente (ratedBy = DRIVER). Solo sobre viajes COMPLETED y una vez por lado:
+   * el índice único (trip_id, rated_by) lo garantiza incluso ante pedidos concurrentes (RNF-08).
+   */
+  async rateTrip(
+    tripId: string,
+    ratedBy: RatingAuthor,
+    rating: { score: number; comment?: string | null },
+    auth: AuthContext,
+    correlationId: string
+  ) {
+    const trip = await this.tripRepository.findById(tripId);
+    if (!trip) {
+      throw new ApiError(404, "TRIP_NOT_FOUND", `No se encontró el viaje con ID ${tripId}.`);
+    }
+
+    const raterId = ratedBy === "CLIENT" ? trip.clientId : trip.driverId;
+    if (auth.role !== ratedBy || auth.sub !== raterId) {
+      throw new ApiError(
+        403,
+        "FORBIDDEN",
+        ratedBy === "CLIENT"
+          ? "Solo el cliente del viaje (CLIENT) puede calificar al conductor."
+          : "Solo el conductor asignado al viaje (DRIVER) puede calificar al cliente."
+      );
+    }
+
+    if (trip.state !== "COMPLETED") {
+      throw new ApiError(
+        409,
+        "TRIP_NOT_COMPLETED",
+        "Solo se puede calificar un viaje finalizado (COMPLETED).",
+        { currentState: trip.state }
+      );
+    }
+
+    const created = await this.tripRepository.createRating({
+      tripId,
+      ratedBy,
+      raterId,
+      ratedId: ratedBy === "CLIENT" ? trip.driverId : trip.clientId,
+      score: rating.score,
+      comment: rating.comment ?? null,
+    });
+
+    if (!created) {
+      throw new ApiError(409, "ALREADY_RATED", "Este viaje ya fue calificado por este participante.");
+    }
+
+    this.publisher.publish(
+      "TripRated",
+      tripId,
+      {
+        ratedBy: created.ratedBy,
+        raterId: created.raterId,
+        ratedId: created.ratedId,
+        score: created.score,
+        comment: created.comment,
+      },
+      correlationId
+    );
+
+    return created;
   }
 }

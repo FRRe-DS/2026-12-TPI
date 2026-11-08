@@ -8,7 +8,8 @@ export type DomainEventType =
   | "DriverArrived"
   | "TripStarted"
   | "TripCompleted"
-  | "TripCancelled";
+  | "TripCancelled"
+  | "TripRated";
 
 export interface EventEnvelope<T extends DomainEventType, P> {
   eventId: string;
@@ -63,12 +64,22 @@ export interface TripCancelledPayload {
   secondsSinceCreation: number;
 }
 
+/** Calificación registrada (RF-6.5). M2 la usa para el conductor (RF-2.5) y M3 para el cliente (RF-3.7). */
+export interface TripRatedPayload {
+  ratedBy: "CLIENT" | "DRIVER";
+  raterId: string;
+  ratedId: string;
+  score: number;
+  comment: string | null;
+}
+
 export type AnyDomainEvent =
   | EventEnvelope<"TripCreated", TripCreatedPayload>
   | EventEnvelope<"DriverArrived", TripStatusPayload>
   | EventEnvelope<"TripStarted", TripStatusPayload>
   | EventEnvelope<"TripCompleted", TripCompletedPayload>
-  | EventEnvelope<"TripCancelled", TripCancelledPayload>;
+  | EventEnvelope<"TripCancelled", TripCancelledPayload>
+  | EventEnvelope<"TripRated", TripRatedPayload>;
 
 /** Arma el payload de TripCreated a partir del viaje recién creado. Las direcciones se omiten si no hay. */
 export function buildTripCreatedPayload(
