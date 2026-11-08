@@ -1,12 +1,16 @@
 /**
  * Módulo M6: Viajes y Ciclo de Vida
- * Cliente / Validador de códigos QR y tokens de un solo uso para RF-6.4 (RNF-13 / RNF-09).
+ * Cliente / Validador de códigos QR y tokens de un solo uso contra el Módulo M8 (Grupo 10).
  *
- * Implementa una estrategia dual:
- * 1. Simulación canónica en memoria (por defecto): reconoce los tokens de prueba del proyecto
- *    (`simulate_503`, `m8_timeout`, `invalid`, `expired`) y protege contra ataques de repetición.
- * 2. Integración HTTP con M8: si está configurada la variable `M8_API_URL`, delega la verificación
- *    en el microservicio M8 con timeout estricto (RNF-13).
+ * Basado en la especificación oficial de M8:
+ * - Endpoint oficial: POST /api/v1/documents/qr/verify (o {M8_API_URL}/documents/qr/verify)
+ * - Request Body: { token: string, tripId: string } (VerifyQrDto)
+ * - Respuestas de M8:
+ *     200 OK: { valid: true, tripId, token, verifiedAt, message } (VerifyQrResponseDto)
+ *     400 Bad Request: El código QR no corresponde al tripId especificado.
+ *     404 Not Found: Token no encontrado o inexistente.
+ *     410 Gone: Token expirado por TTL o ya consumido anteriormente.
+ *     503 Service Unavailable: Componente crítico de M8 no disponible (RNF-13).
  */
 
 export interface QrValidationResult {
@@ -38,7 +42,7 @@ export class M8QrValidatorService {
       };
     }
 
-    // 2. Simulación de tokens inválidos o expirados
+    // 2. Simulación de tokens inválidos o expirados (422 en M6 / 404, 410 en M8)
     if (
       verificationToken === "invalid" ||
       verificationToken === "expired" ||
@@ -60,20 +64,25 @@ export class M8QrValidatorService {
       };
     }
 
-    // 4. Si hay URL real de M8 configurada, consultar vía HTTP
+    // 4. Si hay URL real de M8 configurada, consultar vía HTTP al endpoint oficial
     if (this.m8ApiUrl) {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), this.timeoutMs);
 
+      // Normalizar URL base para respetar el prefijo /api/v1/documents/qr/verify según el contrato de M8
+      const baseUrl = this.m8ApiUrl.replace(/\/+$/, "");
+      const verifyEndpoint = baseUrl.endsWith("/api/v1")
+        ? `${baseUrl}/documents/qr/verify`
+        : `${baseUrl}/api/v1/documents/qr/verify`;
+
       try {
-        const response = await fetch(`${this.m8ApiUrl}/qr/verify`, {
+        const response = await fetch(verifyEndpoint, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            // Credencial de servicio a servicio (RF-1.4)
             Authorization: "Bearer SYSTEM",
           },
-          body: JSON.stringify({ token: verificationToken, tripId }),
+          body: JSON.stringify({ token: verificationToken, tripId: tripId || "" }),
           signal: controller.signal,
         });
 
@@ -84,6 +93,16 @@ export class M8QrValidatorService {
             code: "DEPENDENCY_UNAVAILABLE",
             message: "Servicio de validación (M8) no disponible temporalmente.",
             retryAfterSeconds: retryAfter,
+          };
+        }
+
+        // M8 devuelve 400 (no corresponde al trip), 404 (inexistente) o 410 (expirado/reusado)
+        if (response.status === 400 || response.status === 404 || response.status === 410) {
+          const errData = (await response.json().catch(() => ({}))) as Record<string, unknown>;
+          return {
+            valid: false,
+            code: "INVALID_VERIFICATION_CODE",
+            message: (errData.message as string) || "Código QR inválido, expirado o ya consumido según M8.",
           };
         }
 
@@ -115,7 +134,7 @@ export class M8QrValidatorService {
       }
     }
 
-    // Registrar como consumido
+    // Registrar como consumido en memoria
     this.usedTokens.add(verificationToken);
 
     return { valid: true };

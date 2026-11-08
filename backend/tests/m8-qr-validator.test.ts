@@ -66,33 +66,80 @@ describe("M8QrValidatorService - Pruebas Unitarias Directas", () => {
     expect(reintento.valid).toBe(true);
   });
 
-  it("cuando M8_API_URL está configurada, debe realizar fetch HTTP con Authorization Bearer SYSTEM", async () => {
-    const httpValidator = new M8QrValidatorService("http://m8-notificaciones:8008", 500);
+  it("cuando M8_API_URL está configurada, debe realizar fetch HTTP hacia /api/v1/documents/qr/verify según contrato oficial", async () => {
+    const httpValidator = new M8QrValidatorService("http://m8-notificaciones:3000", 500);
 
     const mockFetch = vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
-      json: async () => ({ valid: true }),
+      json: async () => ({
+        valid: true,
+        tripId: "trip-9082",
+        token: "qr_trip-9082_a1b2c3d4e5f67890",
+        message: "Código QR verificado exitosamente.",
+      }),
     });
     vi.stubGlobal("fetch", mockFetch);
 
-    const result = await httpValidator.validate("qr_token_remoto", "trip-uuid-123");
+    const result = await httpValidator.validate("qr_trip-9082_a1b2c3d4e5f67890", "trip-9082");
 
     expect(result.valid).toBe(true);
     expect(mockFetch).toHaveBeenCalledWith(
-      "http://m8-notificaciones:8008/qr/verify",
+      "http://m8-notificaciones:3000/api/v1/documents/qr/verify",
       expect.objectContaining({
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Authorization: "Bearer SYSTEM",
         },
+        body: JSON.stringify({ token: "qr_trip-9082_a1b2c3d4e5f67890", tripId: "trip-9082" }),
       })
     );
   });
 
+  it("cuando M8 responde 410 (Token expirado o ya consumido según su contrato), debe mapear a INVALID_VERIFICATION_CODE", async () => {
+    const httpValidator = new M8QrValidatorService("http://m8-notificaciones:3000", 500);
+
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 410,
+      json: async () => ({
+        statusCode: 410,
+        message: "El código QR ya fue utilizado anteriormente (código de un solo uso consumido).",
+        error: "Gone",
+      }),
+    });
+    vi.stubGlobal("fetch", mockFetch);
+
+    const result = await httpValidator.validate("qr_ya_quemado", "trip-9082");
+
+    expect(result.valid).toBe(false);
+    expect(result.code).toBe("INVALID_VERIFICATION_CODE");
+    expect(result.message).toMatch(/consumido|utilizado/i);
+  });
+
+  it("cuando M8 responde 404 (No encontrado), debe mapear a INVALID_VERIFICATION_CODE", async () => {
+    const httpValidator = new M8QrValidatorService("http://m8-notificaciones:3000", 500);
+
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 404,
+      json: async () => ({
+        statusCode: 404,
+        message: "Código QR no encontrado o inválido.",
+        error: "Not Found",
+      }),
+    });
+    vi.stubGlobal("fetch", mockFetch);
+
+    const result = await httpValidator.validate("qr_inexistente", "trip-9082");
+
+    expect(result.valid).toBe(false);
+    expect(result.code).toBe("INVALID_VERIFICATION_CODE");
+  });
+
   it("cuando M8 responde 503 HTTP, debe retornar DEPENDENCY_UNAVAILABLE con Retry-After", async () => {
-    const httpValidator = new M8QrValidatorService("http://m8-notificaciones:8008", 500);
+    const httpValidator = new M8QrValidatorService("http://m8-notificaciones:3000", 500);
 
     const mockFetch = vi.fn().mockResolvedValue({
       ok: false,
@@ -109,7 +156,7 @@ describe("M8QrValidatorService - Pruebas Unitarias Directas", () => {
   });
 
   it("cuando la llamada HTTP hacia M8 falla por timeout o error de red, debe retornar DEPENDENCY_UNAVAILABLE", async () => {
-    const httpValidator = new M8QrValidatorService("http://m8-notificaciones:8008", 500);
+    const httpValidator = new M8QrValidatorService("http://m8-notificaciones:3000", 500);
 
     const mockFetch = vi.fn().mockRejectedValue(new Error("Network timeout / AbortError"));
     vi.stubGlobal("fetch", mockFetch);
