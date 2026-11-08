@@ -423,6 +423,8 @@ Si después se quiere correr el backend localmente con `npm run dev` (Opción B)
    | `DATABASE_URL` | (obligatoria) | Conexión a PostgreSQL. |
    | `PORT` | `3006` | Puerto del servidor (RNF-06). |
    | `CLIENT_NO_SHOW_MINUTES` | `5` | Minutos desde el arribo para aceptar `CLIENT_NO_SHOW`. |
+   | `M8_API_URL` | desactivada | URL base del modulo M8 para validacion de QR (RF-6.4). Si no se indica, usa simulacion en memoria. |
+   | `M8_TIMEOUT_MS` | `3000` | Timeout en milisegundos para la llamada de validacion contra M8 (RNF-13). |
    | `RATE_LIMIT_USER_PER_MIN` | `120` | Pedidos por minuto para usuarios. |
    | `RATE_LIMIT_SERVICE_PER_MIN` | `1200` | Pedidos por minuto para servicios (`SYSTEM`). |
    | `ENABLE_DEMO_AUTH` | desactivado | Habilita los atajos de demo (`Bearer SYSTEM`, `X-Actor-Role`, `/api/demo-tokens`). Solo desarrollo. |

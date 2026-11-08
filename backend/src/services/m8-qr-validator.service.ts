@@ -1,11 +1,12 @@
 /**
  * Módulo M6: Viajes y Ciclo de Vida
- * Cliente de validación de códigos QR / Token de un solo uso contra M8 (Notificaciones / Seguridad).
+ * Cliente / Validador de códigos QR y tokens de un solo uso para RF-6.4 (RNF-13 / RNF-09).
  *
- * Cumple con:
- * - RF-6.4 (Inicio validado con QR).
- * - RNF-13 (Resiliencia ante indisponibilidad o timeout de dependencias).
- * - RNF-09 (Protección contra reutilización / replay attacks).
+ * Implementa una estrategia dual:
+ * 1. Simulación canónica en memoria (por defecto): reconoce los tokens de prueba del proyecto
+ *    (`simulate_503`, `m8_timeout`, `invalid`, `expired`) y protege contra ataques de repetición.
+ * 2. Integración HTTP con M8: si está configurada la variable `M8_API_URL`, delega la verificación
+ *    en el microservicio M8 con timeout estricto (RNF-13).
  */
 
 export interface QrValidationResult {
@@ -25,8 +26,6 @@ export class M8QrValidatorService {
 
   /**
    * Valida un token de verificación leído del QR.
-   * Si está configurada la variable `M8_API_URL`, consulta al microservicio M8 por HTTP.
-   * Si no está configurada, utiliza la lógica de simulación controlada (para desarrollo y tests).
    */
   async validate(verificationToken: string, tripId?: string): Promise<QrValidationResult> {
     // 1. Simulación de timeout o 503 (RNF-13)
@@ -52,7 +51,7 @@ export class M8QrValidatorService {
       };
     }
 
-    // 3. Protección contra reutilización (Single-use token / Replay attack)
+    // 3. Protección contra reutilización (RNF-09: Single-use token / Replay attack)
     if (this.usedTokens.has(verificationToken)) {
       return {
         valid: false,
@@ -61,27 +60,30 @@ export class M8QrValidatorService {
       };
     }
 
-    // 4. Si hay URL real de M8 configurada, invocar HTTP con timeout
+    // 4. Si hay URL real de M8 configurada, consultar vía HTTP
     if (this.m8ApiUrl) {
-      try {
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), this.timeoutMs);
 
+      try {
         const response = await fetch(`${this.m8ApiUrl}/qr/verify`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            // Credencial de servicio a servicio (RF-1.4)
+            Authorization: "Bearer SYSTEM",
+          },
           body: JSON.stringify({ token: verificationToken, tripId }),
           signal: controller.signal,
         });
 
-        clearTimeout(timeout);
-
         if (response.status === 503 || response.status === 504) {
+          const retryAfter = Number(response.headers.get("retry-after")) || 5;
           return {
             valid: false,
             code: "DEPENDENCY_UNAVAILABLE",
             message: "Servicio de validación (M8) no disponible temporalmente.",
-            retryAfterSeconds: 5,
+            retryAfterSeconds: retryAfter,
           };
         }
 
@@ -92,24 +94,35 @@ export class M8QrValidatorService {
             message: "El código QR fue rechazado por el módulo M8.",
           };
         }
+
+        const data = (await response.json().catch(() => ({}))) as Record<string, unknown>;
+        if (data.valid === false) {
+          return {
+            valid: false,
+            code: "INVALID_VERIFICATION_CODE",
+            message: (data.message as string) || "Código QR no válido según M8.",
+          };
+        }
       } catch (err: any) {
         return {
           valid: false,
           code: "DEPENDENCY_UNAVAILABLE",
-          message: "No se pudo establecer conexión con M8 (timeout o red).",
+          message: "No se pudo establecer conexión con M8 (timeout o red excedido).",
           retryAfterSeconds: 5,
         };
+      } finally {
+        clearTimeout(timeoutId);
       }
     }
 
-    // Marcar como usado exitosamente
+    // Registrar como consumido
     this.usedTokens.add(verificationToken);
 
     return { valid: true };
   }
 
   /**
-   * Resetea el cache de tokens usados (útil en tests).
+   * Resetea el cache de tokens usados (utilizado en testing y reset de base).
    */
   clear(): void {
     this.usedTokens.clear();
