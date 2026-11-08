@@ -41,7 +41,7 @@ describe("RF-6.3: Arribo del conductor (POST /trips/{id}/arrived)", () => {
     expect(transitions[1].action).toBe("REGISTER_ARRIVAL");
     expect(transitions[1].from).toBe("PENDING_ARRIVAL");
     expect(transitions[1].to).toBe("DRIVER_ARRIVED");
-    expect(transitions[1].actorRole).toBe("DRIVER");
+    expect(transitions[1].actor.role).toBe("DRIVER");
 
     // Verificamos que se haya emitido el evento DriverArrived hacia M8
     const events = eventPublisher
@@ -123,7 +123,7 @@ describe("RF-6.3: Arribo del conductor (POST /trips/{id}/arrived)", () => {
     });
 
     expect(res.status).toBe(409);
-    expect(res.body.code).toBe("ILLEGAL_TRANSITION");
+    expect(res.body.code).toBe("INVALID_STATE_TRANSITION");
   });
 
   // 8. Concurrencia optimista (RNF-08): control de version con If-Match
