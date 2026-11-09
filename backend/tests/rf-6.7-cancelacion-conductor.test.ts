@@ -19,7 +19,63 @@ describe('TripService - RF-6.7: Cancelación por Conductor', () => {
 
     tripService = new TripService(mockTripRepository, mockEventPublisher);
   });
+it('debería rechazar con 422 REASON_NOT_ALLOWED si el conductor intenta usar CLIENT_NO_SHOW antes de cumplirse los 5 minutos del arribo', async () => {
+    const tripId = 'trip-123';
+    const driverId = 'driver-abc';
+    const auth = { sub: driverId, role: 'DRIVER' as const };
+    const reason = 'CLIENT_NO_SHOW';
 
+    const mockTrip = {
+      id: tripId,
+      clientId: 'client-xyz',
+      driverId: driverId,
+      state: 'DRIVER_ARRIVED',
+      version: 1,
+      createdAt: new Date(),
+      arrivedAt: new Date(), // Arribó recién (0 minutos transcurridos)
+    };
+
+    mockTripRepository.findById.mockResolvedValue(mockTrip);
+
+    await expect(
+      tripService.cancelTrip(tripId, { reason }, auth, 'corr-1')
+    ).rejects.toSatisfy((error: any) => {
+      expect(error).toBeInstanceOf(ApiError);
+      expect(error.statusCode).toBe(422);
+      expect(error.code).toBe('REASON_NOT_ALLOWED');
+      return true;
+    });
+  });
+
+  it('debería evaluar requiresRedispatch como false si el conductor cancela por CLIENT_NO_SHOW', async () => {
+    const tripId = 'trip-123';
+    const driverId = 'driver-abc';
+    const auth = { sub: driverId, role: 'DRIVER' as const };
+    const reason = 'CLIENT_NO_SHOW';
+
+    const mockTrip = {
+      id: tripId,
+      clientId: 'client-xyz',
+      driverId: driverId,
+      state: 'DRIVER_ARRIVED',
+      version: 1,
+      createdAt: new Date(),
+      arrivedAt: new Date(Date.now() - 6 * 60 * 1000), // Arribó hace 6 minutos (> 5 min)
+    };
+
+    mockTripRepository.findById.mockResolvedValue(mockTrip);
+    mockTripRepository.transitionStateAtomic.mockResolvedValue({
+      ...mockTrip,
+      state: 'CANCELLED',
+      cancelledBy: 'DRIVER',
+      cancellationReason: reason,
+      requiresRedispatch: false, // Regla de negocio para no-show
+    });
+
+    const result = await tripService.cancelTrip(tripId, { reason }, auth, 'corr-1');
+
+    expect(result.requiresRedispatch).toBe(false);
+  });
   it('debería permitir al conductor asignado cancelar el viaje con un motivo válido y evaluar requiresRedispatch como true', async () => {
     // Arrange
     const tripId = 'trip-123';
