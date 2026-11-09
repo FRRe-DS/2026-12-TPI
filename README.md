@@ -474,6 +474,7 @@ Cada requisito funcional tiene su propio test, con el nombre `rf-6.x-...`. Todos
 | Requisito | Test unitario | Test de integración |
 | :--- | :--- | :--- |
 | RF-6.1 Estados del viaje | `npx vitest run tests/rf-6.1-estados-viaje.test.ts` | `npx vitest run --config vitest.integration.config.ts tests/integration/rf-6.1-estados-viaje.test.ts` |
+| RF-6.6 Cancelación por cliente | `npx vitest run tests/rf-6.6-cancelacion-cliente.test.ts` | `npx vitest run --config vitest.integration.config.ts tests/integration/rf-6.6-cancelacion-cliente.test.ts` |
 
 > **Para el equipo:** cuando termines el test de tu requisito, agregá tu fila a esta tabla con el mismo formato. Si tu requisito tiene un solo tipo de test (solo unitario o solo integración), poné `—` en la otra columna. Para correr todo: `npm test` y `npm run test:integration`.
 
@@ -481,6 +482,12 @@ Cada requisito funcional tiene su propio test, con el nombre `rf-6.x-...`. Todos
 * **Unitario:** la máquina de estados completa (5 estados × 5 destinos × 4 roles): las 10 transiciones permitidas, las 14 rechazadas por rol (`403`) y las 76 ilegales (`409`); los estados terminales, el rol `SYSTEM`, `getAllowedTransitions` y que los estados coincidan con el contrato (`openapi.yaml`) y con el enum de Prisma.
 * **Integración:** lo mismo por HTTP con la base real: el ciclo completo, cada acción (`arrived`, `start`, `complete`, `cancel`) desde cada estado, quién puede ejecutarla, que un rechazo no cambie el estado ni deje historial ni eventos, el `404` de viaje inexistente y la concurrencia de dos `arrived` simultáneos.
 * **Lo que no cubre, a propósito:** el QR (RF-6.4), el cierre del viaje (RF-6.5), los motivos de cancelación (RF-6.6 y RF-6.7) y la forma del historial (RF-6.8), que tienen su propio test.
+
+**Qué cubre el RF-6.6:**
+* **Unitario:** el catálogo de motivos del cliente (exactamente `CHANGE_OF_PLANS`, `EXCESSIVE_DELAY`, `DRIVER_NO_SHOW` y `OTHER`; rechaza los otros 5), que una cancelación del cliente nunca pide re-despacho (`requiresRedispatch: false`) y que solo puede cancelar desde `PENDING_ARRIVAL` y `DRIVER_ARRIVED`.
+* **Integración:** las 8 combinaciones válidas (4 motivos × 2 estados) con la respuesta completa (`version`, `ETag`, `cancelledAt`, `cancellation`); el **tiempo transcurrido para M7**: `secondsSinceCreation` en el evento `TripCancelled` y en el historial; el payload del evento y la fila `CANCEL` del historial con el cliente como actor; los rechazos (`400` cuerpo inválido, `403` cliente ajeno o viaje en curso, `409` viaje terminado o ya cancelado, `422` motivo de otro rol) sin cambiar el viaje ni publicar eventos; la concurrencia (cliente y conductor cancelan a la vez: gana uno solo) y el reintento con `Idempotency-Key`.
+* **Lo que no cubre, a propósito:** la cancelación del conductor y del operador (RF-6.7), que tiene su propio test.
+* **Pendiente de decisión del grupo:** si el cliente que cancela un viaje en curso debe recibir `403` (comportamiento actual) o `409`.
 
 ### Probar la API desde la terminal
 
