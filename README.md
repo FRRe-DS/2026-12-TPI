@@ -93,7 +93,7 @@ Almacena el estado vigente y los datos principales del viaje.
 | `clientId` | `UUID` | No nulo | Identificador del cliente asociado al viaje (dominio M2). |
 | `driverId` | `UUID` | No nulo | Identificador del conductor asignado por despacho (dominio M3). |
 | `vehicleId` | `UUID` | No nulo | Identificador del vehículo asignado (dominio M3). |
-| `vehicleType` | `VehicleType (Enum)` | No nulo | Tipo de vehículo (`CAR` / `MOTORCYCLE`), copia del dato de M3 al momento de la asignación. |
+| `vehicleType` | `VehicleType (Enum)` | No nulo | Tipo de vehículo (`AUTO` / `MOTO`), copia del dato de M3 al momento de la asignación. |
 | `reservationId` | `UUID` | Nullable | Reserva asociada, si el viaje proviene de una. |
 | `originAddress` / `destinationAddress` | `String` | Nullable | Direcciones en texto (hasta 300 caracteres). |
 | `originLatitude` / `originLongitude` | `DOUBLE PRECISION` | No nulo | Coordenadas del punto de retiro. |
@@ -148,7 +148,7 @@ Registro de las claves `Idempotency-Key` recibidas, para devolver la misma respu
 | Enum | Valores | Uso |
 | :--- | :--- | :--- |
 | `TripState` | `PENDING_ARRIVAL`, `DRIVER_ARRIVED`, `IN_PROGRESS`, `COMPLETED`, `CANCELLED` | Estado del viaje (`Trip.state`, `TripEventHistory.state` y `fromState`). |
-| `VehicleType` | `CAR`, `MOTORCYCLE` | Tipo de vehículo del viaje. |
+| `VehicleType` | `AUTO`, `MOTO` | Tipo de vehículo del viaje. |
 | `ActorRole` | `CLIENT`, `DRIVER`, `OPERATOR`, `SYSTEM` | Rol del actor de cada transición. |
 | `CancellationReason` | `CHANGE_OF_PLANS`, `EXCESSIVE_DELAY`, `DRIVER_NO_SHOW`, `CLIENT_NO_SHOW`, `VEHICLE_PROBLEM`, `ORIGIN_UNREACHABLE`, `SECURITY_INCIDENT`, `ADMINISTRATIVE_BLOCK`, `OTHER` | Motivo de cancelación. |
 | `TripAction` | `CREATE`, `REGISTER_ARRIVAL`, `START`, `COMPLETE`, `CANCEL` | Acción que originó cada fila del historial. |
@@ -247,7 +247,7 @@ Hay **un único evento de cancelación**. Quién canceló (`cancelledBy`), el mo
 | `clientId` | uuid | M8 notifica al pasajero. |
 | `driverId` | uuid | M4 reserva al conductor asignado. |
 | `vehicleId` | uuid | M8 y M4 identifican el vehículo del viaje. |
-| `vehicleType` | `CAR` \| `MOTORCYCLE` | Tipo de vehículo del viaje. |
+| `vehicleType` | `AUTO` \| `MOTO` | Tipo de vehículo del viaje. |
 | `reservationId` | uuid \| null | Reserva asociada, si la hay. |
 | `originLatitude`, `originLongitude`, `destinationLatitude`, `destinationLongitude` | number | Coordenadas de retiro y destino. |
 | `originAddress`, `destinationAddress` | string (opcionales) | Direcciones en texto; se omiten si no hay. |
@@ -266,7 +266,7 @@ Hay **un único evento de cancelación**. Quién canceló (`cancelledBy`), el mo
 | `clientId` | uuid | M7 cobra y M8 emite el comprobante. |
 | `driverId` | uuid | M7 liquida al conductor; M4 lo libera. |
 | `vehicleId` | uuid | Identifica el vehículo del viaje. |
-| `vehicleType` | `CAR` \| `MOTORCYCLE` | M7 aplica la tarifa del tipo de vehículo sin consultar a M3. |
+| `vehicleType` | `AUTO` \| `MOTO` | M7 aplica la tarifa del tipo de vehículo sin consultar a M3. |
 | `closure` | object | Cierre del viaje: `distanceKm` (informada por el conductor; M6 no mide distancia), `durationSeconds` (duración exacta calculada por M6, **el valor que M7 usa para tarifar**, RF-6.5 / RF-7.1) y, si el conductor las informó, `finalLatitude` y `finalLongitude`. |
 | `startedAt` | date-time | Inicio real del viaje, por si M7 o M8 lo necesitan sin consultar. |
 | `completedAt` | date-time | Momento del cierre. |
@@ -466,6 +466,21 @@ Si después se quiere correr el backend localmente con `npm run dev` (Opción B)
    ```bash
    npx prisma studio
    ```
+
+### Cómo correr los tests de cada requisito
+
+Cada requisito funcional tiene su propio test, con el nombre `rf-6.x-...`. Todos los comandos se corren **desde `backend`**. Los unitarios no necesitan Docker; los de integración necesitan PostgreSQL levantado (`docker compose up -d db`, desde la raíz del repo).
+
+| Requisito | Test unitario | Test de integración |
+| :--- | :--- | :--- |
+| RF-6.1 Estados del viaje | `npx vitest run tests/rf-6.1-estados-viaje.test.ts` | `npx vitest run --config vitest.integration.config.ts tests/integration/rf-6.1-estados-viaje.test.ts` |
+
+> **Para el equipo:** cuando termines el test de tu requisito, agregá tu fila a esta tabla con el mismo formato. Si tu requisito tiene un solo tipo de test (solo unitario o solo integración), poné `—` en la otra columna. Para correr todo: `npm test` y `npm run test:integration`.
+
+**Qué cubre el RF-6.1:**
+* **Unitario:** la máquina de estados completa (5 estados × 5 destinos × 4 roles): las 10 transiciones permitidas, las 14 rechazadas por rol (`403`) y las 76 ilegales (`409`); los estados terminales, el rol `SYSTEM`, `getAllowedTransitions` y que los estados coincidan con el contrato (`openapi.yaml`) y con el enum de Prisma.
+* **Integración:** lo mismo por HTTP con la base real: el ciclo completo, cada acción (`arrived`, `start`, `complete`, `cancel`) desde cada estado, quién puede ejecutarla, que un rechazo no cambie el estado ni deje historial ni eventos, el `404` de viaje inexistente y la concurrencia de dos `arrived` simultáneos.
+* **Lo que no cubre, a propósito:** el QR (RF-6.4), el cierre del viaje (RF-6.5), los motivos de cancelación (RF-6.6 y RF-6.7) y la forma del historial (RF-6.8), que tienen su propio test.
 
 ### Probar la API desde la terminal
 
