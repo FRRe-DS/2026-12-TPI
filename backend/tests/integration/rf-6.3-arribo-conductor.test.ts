@@ -8,9 +8,23 @@ import {
   api,
   tokens,
   createTrip,
-  advanceTrip,
 } from "./helpers.js";
 
+/**
+ * RF-6.3: Arribo del conductor (Integracion)
+ *
+ * Prueba por HTTP real contra PostgreSQL el endpoint POST /trips/{id}/arrived:
+ * - Transicion de PENDING_ARRIVAL a DRIVER_ARRIVED
+ * - Actualizacion de version y cabecera ETag
+ * - Emision del evento de dominio DriverArrived hacia M8
+ * - Seguridad por roles (403 para CLIENT, OPERATOR y conductor no asignado)
+ * - Validacion de identificador UUID (400) y viaje inexistente (404)
+ * - Rechazo de arribo redundante o invalido (409)
+ * - Precondiciones de concurrencia optimista con If-Match (412)
+ * - Idempotencia con Idempotency-Key (200 con cabecera Idempotent-Replayed)
+ *
+ * Aislamiento funcional: no invoca endpoints de otros requisitos (RF-6.4, RF-6.5, RF-6.8).
+ */
 describe("RF-6.3: Arribo del conductor (POST /trips/{id}/arrived)", () => {
   beforeAll(startServer);
   afterAll(stopServer);
@@ -30,18 +44,6 @@ describe("RF-6.3: Arribo del conductor (POST /trips/{id}/arrived)", () => {
     expect(res.body.version).toBe(2);
     expect(res.headers.get("etag")).toBe('"2"');
     expect(res.body.arrivedAt).not.toBeNull();
-
-    // Verificamos que se haya registrado en el historial de auditoria (RF-6.8)
-    const historyRes = await api("GET", `/trips/${trip.id}/history`, {
-      token: driverToken,
-    });
-    expect(historyRes.status).toBe(200);
-    const transitions = historyRes.body.transitions;
-    expect(transitions).toHaveLength(2); // CREATE + REGISTER_ARRIVAL
-    expect(transitions[1].action).toBe("REGISTER_ARRIVAL");
-    expect(transitions[1].from).toBe("PENDING_ARRIVAL");
-    expect(transitions[1].to).toBe("DRIVER_ARRIVED");
-    expect(transitions[1].actor.role).toBe("DRIVER");
 
     // Verificamos que se haya emitido el evento DriverArrived hacia M8
     const events = eventPublisher
@@ -113,17 +115,24 @@ describe("RF-6.3: Arribo del conductor (POST /trips/{id}/arrived)", () => {
     expect(res.body.code).toBe("TRIP_NOT_FOUND");
   });
 
-  // 7. Maquina de estados (RF-6.1): no permite arribo si el viaje ya inicio
-  it("responde 409 Conflict si se intenta marcar arribo en un viaje IN_PROGRESS", async () => {
+  // 7. Maquina de estados: rechaza transicion redundante si ya se registro arribo (409)
+  it("responde 409 Conflict si se intenta marcar arribo cuando el viaje ya esta en DRIVER_ARRIVED", async () => {
     const { trip } = await createTrip();
-    await advanceTrip(trip, "IN_PROGRESS");
+    const driverToken = tokens.driver(trip.driverId);
 
-    const res = await api("POST", `/trips/${trip.id}/arrived`, {
-      token: tokens.driver(trip.driverId),
+    // Primer arribo: exitoso
+    const primerArribo = await api("POST", `/trips/${trip.id}/arrived`, {
+      token: driverToken,
     });
+    expect(primerArribo.status).toBe(200);
+    expect(primerArribo.body.state).toBe("DRIVER_ARRIVED");
 
-    expect(res.status).toBe(409);
-    expect(res.body.code).toBe("INVALID_STATE_TRANSITION");
+    // Segundo arribo (sin Idempotency-Key): intento redundante no permitido
+    const segundoArribo = await api("POST", `/trips/${trip.id}/arrived`, {
+      token: driverToken,
+    });
+    expect(segundoArribo.status).toBe(409);
+    expect(segundoArribo.body.code).toBe("INVALID_STATE_TRANSITION");
   });
 
   // 8. Concurrencia optimista (RNF-08): control de version con If-Match
@@ -140,31 +149,28 @@ describe("RF-6.3: Arribo del conductor (POST /trips/{id}/arrived)", () => {
   });
 
   // 9. Idempotencia (RNF-09): reintentos con Idempotency-Key
-  it("soporta Idempotency-Key y reenvia el mismo 200 sin duplicar transiciones de auditoria", async () => {
+  it("soporta Idempotency-Key y reenvia el mismo 200 sin volver a aplicar la transicion", async () => {
     const { trip } = await createTrip();
     const driverToken = tokens.driver(trip.driverId);
     const key = `idemp-arrived-${crypto.randomUUID()}`;
 
-    // Primer intento
+    // Primer intento con la clave de idempotencia
     const primerIntento = await api("POST", `/trips/${trip.id}/arrived`, {
       token: driverToken,
       headers: { "idempotency-key": key },
     });
     expect(primerIntento.status).toBe(200);
     expect(primerIntento.body.state).toBe("DRIVER_ARRIVED");
+    expect(primerIntento.body.version).toBe(2);
 
-    // Segundo intento con la misma clave (simulando reintento por caida de conexion)
+    // Segundo intento con la misma clave (simula que se corto internet y reintento)
     const segundoIntento = await api("POST", `/trips/${trip.id}/arrived`, {
       token: driverToken,
       headers: { "idempotency-key": key },
     });
     expect(segundoIntento.status).toBe(200);
     expect(segundoIntento.headers.get("idempotent-replayed")).toBe("true");
-
-    // Comprobamos que el historial solo tenga 2 filas (no creo una tercera duplicada)
-    const historyRes = await api("GET", `/trips/${trip.id}/history`, {
-      token: driverToken,
-    });
-    expect(historyRes.body.transitions).toHaveLength(2);
+    expect(segundoIntento.body.state).toBe("DRIVER_ARRIVED");
+    expect(segundoIntento.body.version).toBe(2);
   });
 });
