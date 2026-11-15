@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { TripService } from '../src/services/trip.service';
-import { ApiError } from '../src/middlewares/error.middleware'; // Ruta real del error en tu backend
+import { TripService } from '../src/services/trip.service.js';
+import { ApiError } from '../src/middlewares/error.middleware.js'; // Ruta real del error en tu backend
 
 describe('TripService - RF-6.7: Cancelación por Conductor', () => {
   let tripService: TripService;
@@ -43,6 +43,7 @@ it('debería rechazar con 422 REASON_NOT_ALLOWED si el conductor intenta usar CL
       expect(error).toBeInstanceOf(ApiError);
       expect(error.statusCode).toBe(422);
       expect(error.code).toBe('REASON_NOT_ALLOWED');
+      expect(mockTripRepository.transitionStateAtomic).not.toHaveBeenCalled();
       return true;
     });
   });
@@ -138,10 +139,33 @@ it('debería rechazar con 422 REASON_NOT_ALLOWED si el conductor intenta usar CL
       expect(error).toBeInstanceOf(ApiError);
       expect(error.statusCode).toBe(403);
       expect(error.code).toBe('FORBIDDEN');
+      expect(mockTripRepository.transitionStateAtomic).not.toHaveBeenCalled();
       return true;
     });
   });
+  it('debería rechazar con 403 si el conductor intenta cancelar un viaje que ya está IN_PROGRESS', async () => {
+    const tripId = 'trip-123';
+    const driverId = 'driver-abc';
+    const auth = { sub: driverId, role: 'DRIVER' as const };
 
+    const mockTrip = {
+      id: tripId,
+      clientId: 'client-xyz',
+      driverId: driverId,
+      state: 'IN_PROGRESS', // Estado en curso
+      version: 2,
+    };
+
+    mockTripRepository.findById.mockResolvedValue(mockTrip);
+
+    await expect(
+      tripService.cancelTrip(tripId, { reason: 'VEHICLE_PROBLEM' }, auth, 'corr-1')
+    ).rejects.toSatisfy((error: any) => {
+      expect(error.statusCode).toBe(403);
+      expect(mockTripRepository.transitionStateAtomic).not.toHaveBeenCalled();
+      return true;
+    });
+  });
 it('debería rechazar con 409 si el estado no permite la transición por reglas de máquina de estados', async () => {
     const tripId = 'trip-456';
     const driverId = 'driver-abc';
@@ -166,6 +190,7 @@ it('debería rechazar con 409 si el estado no permite la transición por reglas 
       expect(error).toBeInstanceOf(ApiError);
       expect(error.statusCode).toBe(409);
       expect(error.code).toBe('INVALID_STATE_TRANSITION');
+      expect(mockTripRepository.transitionStateAtomic).not.toHaveBeenCalled();
       return true;
     });
   });
@@ -194,6 +219,7 @@ it('debería rechazar con 409 si el estado no permite la transición por reglas 
       expect(error).toBeInstanceOf(ApiError);
       expect(error.statusCode).toBe(422);
       expect(error.code).toBe('REASON_NOT_ALLOWED');
+      expect(mockTripRepository.transitionStateAtomic).not.toHaveBeenCalled();
       return true;
     });
   });
