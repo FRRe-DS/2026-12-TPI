@@ -474,6 +474,7 @@ Cada requisito funcional tiene su propio test, con el nombre `rf-6.x-...`. Todos
 | Requisito | Test unitario | Test de integración |
 | :--- | :--- | :--- |
 | RF-6.1 Estados del viaje | `npx vitest run tests/rf-6.1-estados-viaje.test.ts` | `npx vitest run --config vitest.integration.config.ts tests/integration/rf-6.1-estados-viaje.test.ts` |
+| RF-6.2 Consulta de estado | `npx vitest run tests/rf-6.2-consulta-estado.test.ts` | `npx vitest run --config vitest.integration.config.ts tests/integration/rf-6.2-consulta-estado.test.ts` |
 | RF-6.3 Arribo del conductor | npx vitest run tests/rf-6.3-driver-arrived.test.ts | npx vitest run --config vitest.integration.config.ts tests/integration/rf-6.3-arribo-conductor.test.ts |
 | RF-6.6 Cancelación por cliente | `npx vitest run tests/rf-6.6-cancelacion-cliente.test.ts` | `npx vitest run --config vitest.integration.config.ts tests/integration/rf-6.6-cancelacion-cliente.test.ts` |
 
