@@ -474,6 +474,7 @@ Cada requisito funcional tiene su propio test, con el nombre `rf-6.x-...`. Todos
 | Requisito | Test unitario | Test de integración |
 | :--- | :--- | :--- |
 | RF-6.1 Estados del viaje | `npx vitest run tests/rf-6.1-estados-viaje.test.ts` | `npx vitest run --config vitest.integration.config.ts tests/integration/rf-6.1-estados-viaje.test.ts` |
+| RF-6.3 Arribo del conductor | npx vitest run tests/rf-6.3-driver-arrived.test.ts | npx vitest run --config vitest.integration.config.ts tests/integration/rf-6.3-arribo-conductor.test.ts |
 
 > **Para el equipo:** cuando termines el test de tu requisito, agregá tu fila a esta tabla con el mismo formato. Si tu requisito tiene un solo tipo de test (solo unitario o solo integración), poné `—` en la otra columna. Para correr todo: `npm test` y `npm run test:integration`.
 
@@ -481,6 +482,12 @@ Cada requisito funcional tiene su propio test, con el nombre `rf-6.x-...`. Todos
 * **Unitario:** la máquina de estados completa (5 estados × 5 destinos × 4 roles): las 10 transiciones permitidas, las 14 rechazadas por rol (`403`) y las 76 ilegales (`409`); los estados terminales, el rol `SYSTEM`, `getAllowedTransitions` y que los estados coincidan con el contrato (`openapi.yaml`) y con el enum de Prisma.
 * **Integración:** lo mismo por HTTP con la base real: el ciclo completo, cada acción (`arrived`, `start`, `complete`, `cancel`) desde cada estado, quién puede ejecutarla, que un rechazo no cambie el estado ni deje historial ni eventos, el `404` de viaje inexistente y la concurrencia de dos `arrived` simultáneos.
 * **Lo que no cubre, a propósito:** el QR (RF-6.4), el cierre del viaje (RF-6.5), los motivos de cancelación (RF-6.6 y RF-6.7) y la forma del historial (RF-6.8), que tienen su propio test.
+
+**Qué cubre el RF-6.3:**
+
+* **Unitario:** (tests/rf-6.3-driver-arrived.test.ts): la lógica de negocio de TripService.markDriverArrived(...) aislada con mocks: transición válida de PENDING_ARRIVAL a DRIVER_ARRIVED, registro de marca temporal arrivedAt, publicación del evento de dominio DriverArrived con payload { clientId, driverId } hacia M8, rechazo por rol para CLIENT, OPERATOR y SYSTEM (403 FORBIDDEN), rechazo de conductor no asignado (403 FORBIDDEN), viaje inexistente (404 TRIP_NOT_FOUND), conflicto de estados cuando no está en PENDING_ARRIVAL (409 INVALID_STATE_TRANSITION), precondición de versión If-Match (412 PRECONDITION_FAILED) y conflicto por actualización concurrente en base (409 CONCURRENCY_CONFLICT).
+* **Integración:** ejercitación HTTP real de POST /trips/{id}/arrived contra PostgreSQL: persistencia atómica en base de datos, actualización de versión y cabecera ETag: "2", emisión del evento DriverArrived, rechazo de roles no autorizados (403), validación de identificador UUID (400 VALIDATION) y viaje inexistente (404), rechazo de arribo redundante (409 INVALID_STATE_TRANSITION), control de concurrencia optimista (412 PRECONDITION_FAILED) e idempotencia con Idempotency-Key (cabecera Idempotent-Replayed: true devolviendo el mismo 200 sin re-ejecutar la transición).
+* **Lo que no cubre, a propósito:** la creación del viaje (RF-6.1 / M5), el inicio validado por QR (RF-6.4), el cierre con odómetro (RF-6.5), cancelaciones (RF-6.6 / RF-6.7) ni consultas de historial (RF-6.8), que corresponden a los demás requisitos.
 
 ### Probar la API desde la terminal
 
