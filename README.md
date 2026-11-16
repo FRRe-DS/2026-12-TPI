@@ -289,7 +289,7 @@ Hay **un único evento de cancelación**. Quién canceló (`cancelledBy`), el mo
 | `secondsSinceCreation` | integer | Antigüedad del viaje al cancelarse; insumo del cargo de cancelación (RF-7.4). |
 
 ### Dependencias Síncronas Salientes
-* **M8:** validación del token / QR de un solo uso en `POST /trips/{id}/start`. Ante timeout o indisponibilidad se responde `503` sin modificar el estado (RNF-13). Hoy la validación está simulada dentro de `TripService` (ver pendientes).
+* **M8:** validación del token / QR de un solo uso en `POST /trips/{id}/start` delegada en `M8QrValidatorService` mediante `POST /api/v1/documents/qr/verify` (o simulación en memoria si `M8_API_URL` no está definida). Soporta token de servicio configurable (`M8_SERVICE_TOKEN`), timeout (`M8_TIMEOUT_MS`) y reintentos limitados (RNF-13). Ante timeout o indisponibilidad se responde `503 DEPENDENCY_UNAVAILABLE` con cabecera `Retry-After: 5` sin alterar el estado del viaje.
 * **M1:** validación del JWT y sus claims (`sub`, `role`, `exp`) en cada operación protegida (RF-1.4).
 
 ---
@@ -319,7 +319,7 @@ Hay **un único evento de cancelación**. Quién canceló (`cancelledBy`), el mo
 | Tema | Estado | Impacto |
 | :--- | :--- | :--- |
 | Verificación de la firma del JWT | Hoy se decodifica el token y se leen `sub`, `role` y `exp`, pero **no se valida la firma**: un token fabricado con rol `SYSTEM` sería aceptado | Depende de M1 (clave pública / JWKS). Es el pendiente más importante antes de un entorno real (RF-1.4 / RNF-06) |
-| Validación del QR contra M8 | Simulada dentro de `TripService` (tokens de prueba como `invalid`, `expired` o `simulate_503`); los tokens ya usados se guardan en memoria | Se pierden al reiniciar el servidor; queda para integrar M8 real (RF-6.4 / RNF-13) |
+| Validación del QR contra M8 | `M8QrValidatorService` implementa la llamada HTTP oficial a M8 (`POST /api/v1/documents/qr/verify`) con quemado atómico garantizado por M8 (Redis con TTL y 410 Gone). En modo local/desarrollo sin M8, la simulación usa un cache en memoria | En modo local sin M8, los tokens consumidos en memoria se pierden al reiniciar el servidor; en producción con M8, M8 es la fuente canónica de verdad (RF-6.4 / RNF-09 / RNF-13) |
 | Bus de eventos | En memoria (`event-publisher.service.ts`), guarda los últimos 100 | Se pierde al reiniciar el servidor; queda para la iteración con RabbitMQ (RNF-10) |
 | RabbitMQ, Redis y outbox | No están integrados: `/health/details` los informa como `NOT_CONFIGURED` y `outbox` como `null` | Hasta entonces no hay entrega garantizada de eventos ni estado compartido entre instancias |
 | Límite de pedidos | Se cuenta en memoria dentro de cada proceso | Con varias instancias del servicio cada una cuenta por separado; con Redis sería compartido (RNF-12) |
@@ -423,8 +423,11 @@ Si después se quiere correr el backend localmente con `npm run dev` (Opción B)
    | `DATABASE_URL` | (obligatoria) | Conexión a PostgreSQL. |
    | `PORT` | `3006` | Puerto del servidor (RNF-06). |
    | `CLIENT_NO_SHOW_MINUTES` | `5` | Minutos desde el arribo para aceptar `CLIENT_NO_SHOW`. |
-   | `M8_API_URL` | desactivada | URL base del modulo M8 para validacion de QR (RF-6.4). Si no se indica, usa simulacion en memoria. |
-   | `M8_TIMEOUT_MS` | `3000` | Timeout en milisegundos para la llamada de validacion contra M8 (RNF-13). |
+   | `M8_API_URL` | desactivada | URL base del módulo M8 para validación de QR (RF-6.4). Si no se indica, usa simulación en memoria. |
+   | `M8_TIMEOUT_MS` | `3000` | Timeout en milisegundos para la llamada de validación contra M8 (RNF-13). |
+   | `M8_SERVICE_TOKEN` | `SYSTEM` | Token de autorización de servicio a servicio (`Authorization: Bearer <token>`) enviado a M8 (RNF-06). |
+   | `M8_MAX_RETRIES` | `1` | Cantidad de reintentos ante fallas transitorias de red o HTTP 503/504 de M8 (RNF-13). |
+   | `M8_RETRY_DELAY_MS` | `150` | Espera en milisegundos entre reintentos contra M8. |
    | `RATE_LIMIT_USER_PER_MIN` | `120` | Pedidos por minuto para usuarios. |
    | `RATE_LIMIT_SERVICE_PER_MIN` | `1200` | Pedidos por minuto para servicios (`SYSTEM`). |
    | `ENABLE_DEMO_AUTH` | desactivado | Habilita los atajos de demo (`Bearer SYSTEM`, `X-Actor-Role`, `/api/demo-tokens`). Solo desarrollo. |

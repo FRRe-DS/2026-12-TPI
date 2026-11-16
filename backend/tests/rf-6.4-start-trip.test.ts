@@ -2,12 +2,14 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import { TripService } from "../src/services/trip.service.js";
 import { TripRepository } from "../src/repositories/trip.repository.js";
 import { EventPublisherService } from "../src/services/event-publisher.service.js";
+import { M8QrValidatorService } from "../src/services/m8-qr-validator.service.js";
 import { ApiError } from "../src/middlewares/error.middleware.js";
 import type { AuthContext } from "../src/middlewares/auth.middleware.js";
 
 describe("RF-6.4 (Inicio validado con código QR / M8) - Pruebas Unitarias", () => {
   let tripRepoMock: any;
   let publisherMock: any;
+  let qrValidator: M8QrValidatorService;
   let tripService: TripService;
 
   const validDriverId = "11111111-1111-1111-1111-111111111111";
@@ -40,9 +42,13 @@ describe("RF-6.4 (Inicio validado con código QR / M8) - Pruebas Unitarias", () 
       publish: vi.fn(),
     };
 
+    // Inyección de un validador limpio por cada test para evitar colisión de estado en memoria (RNF-09)
+    qrValidator = new M8QrValidatorService();
+
     tripService = new TripService(
       tripRepoMock as unknown as TripRepository,
-      publisherMock as unknown as EventPublisherService
+      publisherMock as unknown as EventPublisherService,
+      qrValidator
     );
   });
 
@@ -60,18 +66,13 @@ describe("RF-6.4 (Inicio validado con código QR / M8) - Pruebas Unitarias", () 
     const updatedTrip = {
       ...existingTrip,
       state: "IN_PROGRESS",
-      version: 3,
       startedAt: new Date(),
+      version: 3,
     };
     tripRepoMock.transitionStateAtomic.mockResolvedValue(updatedTrip);
 
     // Act
-    const result = await tripService.startTrip(
-      tripId,
-      "valid_qr_token_abc_123",
-      authDriver,
-      correlationId
-    );
+    const result = await tripService.startTrip(tripId, "token_valido_123", authDriver, correlationId);
 
     // Assert
     expect(result.state).toBe("IN_PROGRESS");
@@ -81,13 +82,17 @@ describe("RF-6.4 (Inicio validado con código QR / M8) - Pruebas Unitarias", () 
         expectedFromState: "DRIVER_ARRIVED",
         targetState: "IN_PROGRESS",
         action: "START",
+        actorId: validDriverId,
         actorRole: "DRIVER",
       })
     );
     expect(publisherMock.publish).toHaveBeenCalledWith(
       "TripStarted",
       tripId,
-      { clientId: validClientId, driverId: validDriverId },
+      expect.objectContaining({
+        clientId: validClientId,
+        driverId: validDriverId,
+      }),
       correlationId
     );
   });
@@ -98,14 +103,17 @@ describe("RF-6.4 (Inicio validado con código QR / M8) - Pruebas Unitarias", () 
 
     // Act & Assert
     await expect(
-      tripService.startTrip(tripId, "token123", authDriver, correlationId)
+      tripService.startTrip("inexistente-id", "token_valido", authDriver, correlationId)
     ).rejects.toMatchObject({
       statusCode: 404,
       code: "TRIP_NOT_FOUND",
     });
+
+    expect(tripRepoMock.transitionStateAtomic).not.toHaveBeenCalled();
+    expect(publisherMock.publish).not.toHaveBeenCalled();
   });
 
-  it("debe rechazar con 403 FORBIDDEN si quien intenta iniciar no es el conductor asignado", async () => {
+  it("debe rechazar con 403 FORBIDDEN si el usuario que llama no es el DRIVER asignado", async () => {
     // Arrange
     const existingTrip = {
       id: tripId,
@@ -116,44 +124,48 @@ describe("RF-6.4 (Inicio validado con código QR / M8) - Pruebas Unitarias", () 
     };
     tripRepoMock.findById.mockResolvedValue(existingTrip);
 
-    // Act & Assert: Chofer distinto al asignado
+    // Act & Assert (conductor ajeno)
     await expect(
-      tripService.startTrip(tripId, "token123", authOtherDriver, correlationId)
+      tripService.startTrip(tripId, "token_valido", authOtherDriver, correlationId)
     ).rejects.toMatchObject({
       statusCode: 403,
       code: "FORBIDDEN",
     });
 
-    // Act & Assert: El cliente intentando iniciar el viaje
+    // Act & Assert (cliente)
     await expect(
-      tripService.startTrip(tripId, "token123", authClient, correlationId)
+      tripService.startTrip(tripId, "token_valido", authClient, correlationId)
     ).rejects.toMatchObject({
       statusCode: 403,
       code: "FORBIDDEN",
     });
+
+    expect(tripRepoMock.transitionStateAtomic).not.toHaveBeenCalled();
   });
 
-  it("debe rechazar con 409 INVALID_STATE_TRANSITION si el viaje no está en DRIVER_ARRIVED", async () => {
+  it("debe rechazar con 409 INVALID_STATE_TRANSITION si el viaje no se encuentra en DRIVER_ARRIVED (RF-6.1)", async () => {
     // Arrange: Viaje aún en PENDING_ARRIVAL
-    const pendingTrip = {
+    const existingTrip = {
       id: tripId,
       clientId: validClientId,
       driverId: validDriverId,
       state: "PENDING_ARRIVAL",
       version: 1,
     };
-    tripRepoMock.findById.mockResolvedValue(pendingTrip);
+    tripRepoMock.findById.mockResolvedValue(existingTrip);
 
     // Act & Assert
     await expect(
-      tripService.startTrip(tripId, "token123", authDriver, correlationId)
+      tripService.startTrip(tripId, "token_valido", authDriver, correlationId)
     ).rejects.toMatchObject({
       statusCode: 409,
       code: "INVALID_STATE_TRANSITION",
     });
+
+    expect(tripRepoMock.transitionStateAtomic).not.toHaveBeenCalled();
   });
 
-  it("debe rechazar con 422 INVALID_VERIFICATION_CODE si el token es inválido o expiró", async () => {
+  it("debe rechazar con 422 INVALID_VERIFICATION_CODE si el código QR / token es inválido o expiró", async () => {
     // Arrange
     const existingTrip = {
       id: tripId,
@@ -164,7 +176,7 @@ describe("RF-6.4 (Inicio validado con código QR / M8) - Pruebas Unitarias", () 
     };
     tripRepoMock.findById.mockResolvedValue(existingTrip);
 
-    // Act & Assert: token explícitamente inválido
+    // Act & Assert con token inválido
     await expect(
       tripService.startTrip(tripId, "invalid", authDriver, correlationId)
     ).rejects.toMatchObject({
@@ -172,7 +184,7 @@ describe("RF-6.4 (Inicio validado con código QR / M8) - Pruebas Unitarias", () 
       code: "INVALID_VERIFICATION_CODE",
     });
 
-    // Act & Assert: token expirado
+    // Act & Assert con token expirado
     await expect(
       tripService.startTrip(tripId, "expired", authDriver, correlationId)
     ).rejects.toMatchObject({
@@ -180,11 +192,10 @@ describe("RF-6.4 (Inicio validado con código QR / M8) - Pruebas Unitarias", () 
       code: "INVALID_VERIFICATION_CODE",
     });
 
-    // El viaje NO debe haber llamado a la persistencia atómica
     expect(tripRepoMock.transitionStateAtomic).not.toHaveBeenCalled();
   });
 
-  it("debe rechazar con 422 INVALID_VERIFICATION_CODE si el token ya fue utilizado (ataque de repetición / deduplicación)", async () => {
+  it("debe rechazar con 422 INVALID_VERIFICATION_CODE si se intenta reutilizar un token de un solo uso (RNF-09)", async () => {
     // Arrange
     const existingTrip = {
       id: tripId,
@@ -194,9 +205,11 @@ describe("RF-6.4 (Inicio validado con código QR / M8) - Pruebas Unitarias", () 
       version: 2,
     };
     tripRepoMock.findById.mockResolvedValue(existingTrip);
+
     tripRepoMock.transitionStateAtomic.mockResolvedValue({
       ...existingTrip,
       state: "IN_PROGRESS",
+      version: 3,
     });
 
     const singleUseToken = "unique_token_to_reuse_123";
