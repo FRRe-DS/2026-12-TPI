@@ -1,10 +1,14 @@
 openapi: 3.1.0
 info:
   title: M6 - Viajes y Ciclo de Vida
-  version: 1.0.0
+  version: 1.1.0
   summary: Ciclo de vida del viaje, desde la asignación hasta la finalización o cancelación.
   description: |
     Contrato del módulo M6 (Grupos 5 y 12). Cubre RF-6.1 a RF-6.8.
+
+    **Rutas:** la forma canónica lleva el prefijo `/api/v1` (`/api/v1/trips`, `/api/v1/health`),
+    igual que el resto de los módulos. Se mantiene el alias sin prefijo por compatibilidad;
+    ambas formas llegan al mismo endpoint.
 
     **Máquina de estados:**
 
@@ -61,10 +65,14 @@ info:
     name: Uso académico
     identifier: UNLICENSED
 servers:
+  - url: http://localhost:3000/api/v1
+    description: Grupo 5 - ruta canónica con prefijo (desarrollo local)
+  - url: http://localhost:3006/api/v1
+    description: Grupo 12 - ruta canónica con prefijo (desarrollo local)
   - url: http://localhost:3000
-    description: Implementación del Grupo 5 (desarrollo local)
+    description: Grupo 5 - alias sin prefijo (compatibilidad)
   - url: http://localhost:3006
-    description: Implementación del Grupo 12 (desarrollo local)
+    description: Grupo 12 - alias sin prefijo (compatibilidad)
 tags:
   - name: Trips
     description: Creación y consulta de viajes.

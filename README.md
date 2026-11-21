@@ -158,7 +158,7 @@ Registro de las claves `Idempotency-Key` recibidas, para devolver la misma respu
 ## Contratos e Integraciones con Otros Módulos (RNF-03)
 
 ### Entradas Síncronas (API REST Expuesta)
-La especificación detallada de los endpoints se encuentra definida bajo el estándar **OpenAPI 3.1**, en `openapi.yaml`. La API no usa prefijo de versión: las rutas son `/trips`, `/health`, etc.
+La especificación detallada de los endpoints se encuentra definida bajo el estándar **OpenAPI 3.1**, en `openapi.yaml`. La forma canónica de las rutas lleva el prefijo `/api/v1` (igual que el resto de los módulos): `POST /api/v1/trips`, `GET /api/v1/health`, etc. Por compatibilidad con los clientes existentes se mantiene también el alias sin prefijo (`POST /trips`, `GET /health`). Las tablas de este README muestran las rutas sin prefijo.
 
 | Método | Ruta | Rol / Origen | Acción / Transición |
 | :--- | :--- | :--- | :--- |
@@ -172,6 +172,8 @@ La especificación detallada de los endpoints se encuentra definida bajo el est�
 | `GET` | `/trips/{id}/history` | `CLIENT` y `DRIVER` del viaje, `OPERATOR` | Registro de auditoría de transiciones, en orden de `sequence` (RF-6.8). `SYSTEM` recibe `403`. |
 | `GET` | `/health` | Público | Liveness: el proceso está vivo. No consulta dependencias (lo usa el `HEALTHCHECK` de Docker). |
 | `GET` | `/health/details` | Público | Readiness y diagnóstico de dependencias (RNF-14). Ver más abajo. |
+
+**Prefijo.** Todas las rutas de la tabla se pueden llamar con `/api/v1` delante: `POST /api/v1/trips`, `GET /api/v1/trips/{id}`, `GET /api/v1/health/details`, etc. Las dos formas llegan al mismo endpoint y el `Location` de una creación conserva el prefijo con el que se hizo el pedido.
 
 **Permisos de lectura.** Un `CLIENT` o `DRIVER` que consulta un viaje ajeno recibe `404 TRIP_NOT_FOUND`, igual que si no existiera, para no revelar que existe.
 

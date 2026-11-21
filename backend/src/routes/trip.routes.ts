@@ -4,21 +4,23 @@ import { authenticateMiddleware } from "../middlewares/auth.middleware.js";
 import { ApiError, handleErrorMiddleware, sendJsonResponse } from "../middlewares/error.middleware.js";
 import { tripController, healthService } from "../config/services.js";
 import { applyRateLimit } from "../middlewares/rate-limit.middleware.js";
+import { toContractPath } from "./contract-path.js";
 
 /**
  * CAPA DE ENRUTAMIENTO (Router Layer)
- * Despacha las peticiones `/api/v1/*` definidas en `openapi.yaml` hacia el `TripController`.
+ * Despacha las peticiones definidas en `openapi.yaml` hacia el `TripController`.
  */
-export async function handleApiV1Router(
+export async function handleContractRouter(
   req: http.IncomingMessage,
   res: http.ServerResponse,
   url: URL
 ): Promise<boolean> {
+  const path = toContractPath(url.pathname);
   const isContractPath =
-    url.pathname === "/health" ||
-    url.pathname === "/health/details" ||
-    url.pathname === "/trips" ||
-    url.pathname.startsWith("/trips/");
+    path === "/health" ||
+    path === "/health/details" ||
+    path === "/trips" ||
+    path.startsWith("/trips/");
 
   if (!isContractPath) {
     return false;
@@ -39,10 +41,10 @@ export async function handleApiV1Router(
 
   const correlationId =
     (req.headers["x-correlation-id"] as string | undefined) || crypto.randomUUID();
-  const subPath = url.pathname;
+  const subPath = path;
 
   try {
-    // 1. GET /api/v1/health (Público, sin requerir JWT)
+    // 1. GET /health (Público, sin requerir JWT)
     if (req.method === "GET" && subPath === "/health") {
       await tripController.getHealth(req, res, correlationId);
       return true;
@@ -65,49 +67,49 @@ export async function handleApiV1Router(
       return true;
     }
 
-    // 3. GET /api/v1/trips
+    // 3. GET /trips
     if (req.method === "GET" && subPath === "/trips") {
       await tripController.listTrips(url, res, auth, correlationId);
       return true;
     }
 
-    // Rutas /api/v1/trips/{id}/*
+    // Rutas /trips/{id}/*
     const tripMatch = subPath.match(/^\/trips\/([^/]+)(\/[a-z-]+)?$/);
     if (tripMatch) {
       const tripId = tripMatch[1]!;
       const action = tripMatch[2] || "";
 
-      // 4. GET /api/v1/trips/{id}
+      // 4. GET /trips/{id}
       if (req.method === "GET" && action === "") {
         await tripController.getTripById(tripId, req, res, auth, correlationId);
         return true;
       }
 
-      // 5. POST /api/v1/trips/{id}/arrived
+      // 5. POST /trips/{id}/arrived
       if (req.method === "POST" && action === "/arrived") {
         await tripController.markDriverArrived(tripId, req, res, auth, correlationId);
         return true;
       }
 
-      // 6. POST /api/v1/trips/{id}/start
+      // 6. POST /trips/{id}/start
       if (req.method === "POST" && action === "/start") {
         await tripController.startTrip(tripId, req, res, auth, correlationId);
         return true;
       }
 
-      // 7. POST /api/v1/trips/{id}/complete
+      // 7. POST /trips/{id}/complete
       if (req.method === "POST" && action === "/complete") {
         await tripController.completeTrip(tripId, req, res, auth, correlationId);
         return true;
       }
 
-      // 8. POST /api/v1/trips/{id}/cancel
+      // 8. POST /trips/{id}/cancel
       if (req.method === "POST" && action === "/cancel") {
         await tripController.cancelTrip(tripId, req, res, auth, correlationId);
         return true;
       }
 
-      // 9. GET /api/v1/trips/{id}/history
+      // 9. GET /trips/{id}/history
       if (req.method === "GET" && action === "/history") {
         await tripController.getTripHistory(tripId, res, auth, correlationId);
         return true;
