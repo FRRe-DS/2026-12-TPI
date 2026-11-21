@@ -51,10 +51,10 @@ jobs:
 
     steps:
       - name: Descargar el código
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Instalar Node.js 22
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: "22"
           cache: npm
@@ -83,7 +83,7 @@ jobs:
 
       - name: Guardar reportes de tests como artefacto
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: g12-vitest-reports
           path: backend/reports/*.xml
@@ -99,7 +99,7 @@ jobs:
 
     steps:
       - name: Descargar el código
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Ejecutar Semgrep (OWASP Top 10, TypeScript, Node.js, Secrets)
         run: |
@@ -116,7 +116,7 @@ jobs:
             /src/backend/src
 
       - name: Guardar reporte SARIF como artefacto
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: g12-semgrep-sarif
           path: reports/semgrep-g12.sarif
