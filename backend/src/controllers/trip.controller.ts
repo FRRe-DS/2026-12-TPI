@@ -26,6 +26,11 @@ function isValidUuid(value: unknown): value is string {
   return typeof value === "string" && UUID_REGEX.test(value);
 }
 
+/** Conserva el prefijo canónico `/api/v1` en `Location` si el pedido llegó por esa ruta. */
+function requestBasePath(req: http.IncomingMessage): string {
+  return req.url?.startsWith("/api/v1/") ? "/api/v1" : "";
+}
+
 /** Lee un parámetro `from`/`to` de la URL como fecha ISO 8601. */
 function parseDateParam(url: URL, name: "from" | "to"): Date | undefined {
   const raw = url.searchParams.get(name);
@@ -216,7 +221,9 @@ export class TripController {
 
     sendJsonResponse(res, result.statusCode, toTripResponse(result.trip), correlationId, {
       ETag: etagForVersion(result.trip.version),
-      ...(result.statusCode === 201 ? { Location: `/trips/${result.trip.id}` } : {}),
+      ...(result.statusCode === 201
+        ? { Location: `${requestBasePath(req)}/trips/${result.trip.id}` }
+        : {}),
     });
   }
 

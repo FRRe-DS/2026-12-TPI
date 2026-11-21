@@ -5,7 +5,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { prisma } from "./config/database.js";
 import { tripService } from "./config/services.js";
-import { handleApiV1Router } from "./routes/trip.routes.js";
+import { handleContractRouter } from "./routes/trip.routes.js";
 import { eventPublisher } from "./services/event-publisher.service.js";
 import { createDemoJwt, isDemoAuthEnabled } from "./middlewares/auth.middleware.js";
 
@@ -36,8 +36,8 @@ export const server = http.createServer(async (req: http.IncomingMessage, res: h
   const url = new URL(req.url || "/", `http://localhost:${PORT}`);
 
   try {
-    // 1. Rutas oficiales del contrato OpenAPI 3.0 (/api/v1/...) mediante Arquitectura en Capas
-    const handledByOpenApi = await handleApiV1Router(req, res, url);
+    // 1. Rutas oficiales del contrato OpenAPI 3.1 mediante arquitectura en capas
+    const handledByOpenApi = await handleContractRouter(req, res, url);
     if (handledByOpenApi) return;
 
     // 2. Servir el archivo openapi.yaml crudo y la interfaz Swagger UI (/docs)
@@ -354,7 +354,7 @@ if (process.env.NODE_ENV !== "test") {
   server.listen(PORT, () => {
     console.log(`\n🚀 Servidor M6 corriendo en:`);
     console.log(`   👉 Panel Visual de Persistencia: http://localhost:${PORT}`);
-    console.log(`   👉 Swagger UI (OpenAPI /api/v1): http://localhost:${PORT}/docs`);
+    console.log(`   👉 Swagger UI (OpenAPI):         http://localhost:${PORT}/docs`);
     console.log(`   👉 Health Check:                 http://localhost:${PORT}/health\n`);
   });
 }
