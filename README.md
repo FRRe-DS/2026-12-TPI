@@ -481,6 +481,7 @@ Cada requisito funcional tiene su propio test, con el nombre `rf-6.x-...`. Todos
 | RF-6.1 Estados del viaje | `npx vitest run tests/rf-6.1-estados-viaje.test.ts` | `npx vitest run --config vitest.integration.config.ts tests/integration/rf-6.1-estados-viaje.test.ts` |
 | RF-6.2 Consulta de estado | `npx vitest run tests/rf-6.2-consulta-estado.test.ts` | `npx vitest run --config vitest.integration.config.ts tests/integration/rf-6.2-consulta-estado.test.ts` |
 | RF-6.3 Arribo del conductor | npx vitest run tests/rf-6.3-driver-arrived.test.ts | npx vitest run --config vitest.integration.config.ts tests/integration/rf-6.3-arribo-conductor.test.ts |
+| RF-6.4 Inicio validado | `npx vitest run tests/rf-6.4-start-trip.test.ts tests/m8-qr-validator.test.ts` | — |
 | RF-6.6 Cancelación por cliente | `npx vitest run tests/rf-6.6-cancelacion-cliente.test.ts` | `npx vitest run --config vitest.integration.config.ts tests/integration/rf-6.6-cancelacion-cliente.test.ts` |
 
 > **Para el equipo:** cuando termines el test de tu requisito, agregá tu fila a esta tabla con el mismo formato. Si tu requisito tiene un solo tipo de test (solo unitario o solo integración), poné `—` en la otra columna. Para correr todo: `npm test` y `npm run test:integration`.
