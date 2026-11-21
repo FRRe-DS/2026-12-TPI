@@ -17,6 +17,7 @@ import {
   InvalidStateTransitionError,
   UnauthorizedRoleTransitionError,
 } from "../domain/trip-state-machine.js";
+import { m8QrValidator, type M8QrValidatorService } from "./m8-qr-validator.service.js";
 import {
   checkCancellationReason,
   requiresRedispatch,
@@ -38,11 +39,10 @@ const CLIENT_NO_SHOW_MINUTES =
  * - Emisión de eventos asíncronos (RNF-03 / RNF-10)
  */
 export class TripService {
-  private readonly usedVerificationTokens = new Set<string>();
-
   constructor(
     private readonly tripRepository: TripRepository,
-    private readonly publisher: EventPublisherService
+    private readonly publisher: EventPublisherService,
+    private readonly qrValidator: M8QrValidatorService = m8QrValidator
   ) {}
 
   /**
@@ -257,30 +257,23 @@ export class TripService {
     // Validación formal mediante la máquina de estados de dominio (RF-6.1)
     this.validateStateTransition(trip.state, TripState.IN_PROGRESS, auth.role);
 
-    // Validación contra M8 (RNF-13: 503 si no disponible; RF-6.4: 422 si token inválido/usado/expirado)
-    if (verificationToken === "m8_timeout" || verificationToken === "simulate_503") {
-      throw new ApiError(
-        503,
-        "DEPENDENCY_UNAVAILABLE",
-        "Servicio de validación (M8) no disponible o timeout excedido (RNF-13).",
-        { headers: { "Retry-After": "5" } }
-      );
-    }
-
-    if (
-      verificationToken === "invalid" ||
-      verificationToken === "expired" ||
-      verificationToken.startsWith("invalid_") ||
-      this.usedVerificationTokens.has(verificationToken)
-    ) {
+    // Validación contra M8 (RF-6.4 / RNF-13 / RNF-09)
+    const validation = await this.qrValidator.validate(verificationToken, tripId);
+    if (!validation.valid) {
+      if (validation.code === "DEPENDENCY_UNAVAILABLE") {
+        throw new ApiError(
+          503,
+          "DEPENDENCY_UNAVAILABLE",
+          validation.message || "Servicio de validación (M8) no disponible o timeout excedido (RNF-13).",
+          { headers: { "Retry-After": String(validation.retryAfterSeconds || 5) } }
+        );
+      }
       throw new ApiError(
         422,
         "INVALID_VERIFICATION_CODE",
-        "El código QR / token de verificación es inválido, ya fue usado o expiró."
+        validation.message || "El código QR / token de verificación es inválido, ya fue usado o expiró."
       );
     }
-
-    this.usedVerificationTokens.add(verificationToken);
 
     const updated = await this.tripRepository.transitionStateAtomic({
       tripId,
