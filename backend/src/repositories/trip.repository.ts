@@ -1,4 +1,5 @@
 import { PrismaClient, TripState, ActorRole, VehicleType, CancellationReason, TripAction, RatingAuthor } from "../../generated/prisma/client.js";
+import { recordTransition } from "../telemetria/metricas.js";
 
 export interface CreateTripRepoInput {
   requestId: string;
@@ -80,7 +81,7 @@ export class TripRepository {
    * Crea el viaje en `trips` y su primer registro en `trip_event_history` en una única transacción ACID.
    */
   async createTripWithInitialEvent(input: CreateTripRepoInput, actorId: string) {
-    return this.db.$transaction(async (tx) => {
+    const created = await this.db.$transaction(async (tx) => {
       const trip = await tx.trip.create({
         data: {
           requestId: input.requestId,
@@ -113,6 +114,8 @@ export class TripRepository {
 
       return trip;
     });
+    recordTransition("NONE", "PENDING_ARRIVAL", "SYSTEM", "CREATE");
+    return created;
   }
 
   /**
@@ -197,7 +200,7 @@ export class TripRepository {
       ...(input.finalLongitude !== undefined ? { finalLongitude: input.finalLongitude } : {}),
     };
 
-    return this.db.$transaction(async (tx) => {
+    const updated = await this.db.$transaction(async (tx) => {
       if (input.expectedFromState) {
         const result = await tx.trip.updateMany({
           where: { id: input.tripId, state: input.expectedFromState },
@@ -234,6 +237,10 @@ export class TripRepository {
 
       return updated;
     });
+    if (updated) {
+      recordTransition(input.expectedFromState ?? "UNKNOWN", input.targetState, input.actorRole, input.action, input.reason);
+    }
+    return updated;
   }
 
   /**

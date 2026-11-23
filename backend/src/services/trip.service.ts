@@ -18,6 +18,7 @@ import {
   UnauthorizedRoleTransitionError,
 } from "../domain/trip-state-machine.js";
 import { m8QrValidator, type M8QrValidatorService } from "./m8-qr-validator.service.js";
+import { measureOperation, withSpan } from "../telemetria/metricas.js";
 import {
   checkCancellationReason,
   requiresRedispatch,
@@ -87,6 +88,7 @@ export class TripService {
    * RF-6.1 / RNF-08 / RNF-09: Crear nuevo viaje desde M5 con garantía de idempotencia.
    */
   async createTrip(input: CreateTripRepoInput, auth: AuthContext, correlationId: string) {
+    return measureOperation("CREATE", async () => {
     if (auth.role !== "SYSTEM") {
       throw new ApiError(
         403,
@@ -126,6 +128,7 @@ export class TripService {
     this.publisher.publish("TripCreated", created.id, buildTripCreatedPayload(created), correlationId);
 
     return { statusCode: 201 as const, trip: created };
+    });
   }
 
   /**
@@ -187,6 +190,7 @@ export class TripService {
    * Delega la validación de transición de estado en TripStateMachine.validate(...) (RF-6.1).
    */
   async markDriverArrived(tripId: string, auth: AuthContext, correlationId: string, ifMatch?: number) {
+    return measureOperation("REGISTER_ARRIVAL", async () => {
     const trip = await this.tripRepository.findById(tripId);
     if (!trip) {
       throw new ApiError(404, "TRIP_NOT_FOUND", `No se encontró el viaje con ID ${tripId}.`);
@@ -226,6 +230,7 @@ export class TripService {
     );
 
     return updated;
+    });
   }
 
   /**
@@ -239,6 +244,7 @@ export class TripService {
     correlationId: string,
     ifMatch?: number
   ) {
+    return measureOperation("START", async () => {
     const trip = await this.tripRepository.findById(tripId);
     if (!trip) {
       throw new ApiError(404, "TRIP_NOT_FOUND", `No se encontró el viaje con ID ${tripId}.`);
@@ -258,7 +264,7 @@ export class TripService {
     this.validateStateTransition(trip.state, TripState.IN_PROGRESS, auth.role);
 
     // Validación contra M8 (RF-6.4 / RNF-13 / RNF-09)
-    const validation = await this.qrValidator.validate(verificationToken, tripId);
+    const validation = await withSpan("m8.qr.verify", () => this.qrValidator.validate(verificationToken, tripId));
     if (!validation.valid) {
       if (validation.code === "DEPENDENCY_UNAVAILABLE") {
         throw new ApiError(
@@ -297,6 +303,7 @@ export class TripService {
     );
 
     return updated;
+    });
   }
 
   /**
@@ -310,6 +317,7 @@ export class TripService {
     correlationId: string,
     ifMatch?: number
   ) {
+    return measureOperation("COMPLETE", async () => {
     const trip = await this.tripRepository.findById(tripId);
     if (!trip) {
       throw new ApiError(404, "TRIP_NOT_FOUND", `No se encontró el viaje con ID ${tripId}.`);
@@ -383,6 +391,7 @@ export class TripService {
     );
 
     return updated;
+    });
   }
 
   /**
@@ -397,6 +406,7 @@ export class TripService {
     correlationId: string,
     ifMatch?: number
   ) {
+    return measureOperation("CANCEL", async () => {
     const trip = await this.tripRepository.findById(tripId);
     if (!trip) {
       throw new ApiError(404, "TRIP_NOT_FOUND", `No se encontró el viaje con ID ${tripId}.`);
@@ -484,6 +494,7 @@ export class TripService {
     );
 
     return updated;
+    });
   }
 
   /**

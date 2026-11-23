@@ -8,6 +8,7 @@ import { tripService } from "./config/services.js";
 import { handleContractRouter } from "./routes/trip.routes.js";
 import { eventPublisher } from "./services/event-publisher.service.js";
 import { createDemoJwt, isDemoAuthEnabled } from "./middlewares/auth.middleware.js";
+import { registerRequestLog } from "./telemetria/registro.js";
 
 // RNF-06: el puerto se configura por variable de entorno, con 3006 como valor por defecto.
 const PORT = Number(process.env.PORT ?? 3006);
@@ -34,6 +35,7 @@ function sendJson(res: http.ServerResponse, status: number, payload: unknown) {
 
 export const server = http.createServer(async (req: http.IncomingMessage, res: http.ServerResponse) => {
   const url = new URL(req.url || "/", `http://localhost:${PORT}`);
+  registerRequestLog(req, res, url.pathname);
 
   try {
     // 1. Rutas oficiales del contrato OpenAPI 3.1 mediante arquitectura en capas
