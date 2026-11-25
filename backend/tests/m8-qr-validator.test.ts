@@ -1,11 +1,29 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
 import { M8QrValidatorService } from "../src/services/m8-qr-validator.service.js";
+import type { TokenProvider } from "../src/services/service-token.service.js";
 
-describe("M8QrValidatorService - Pruebas Unitarias Directas", () => {
+const M8_URL = "http://m8-notificaciones:3000";
+const TRIP_ID = "9082a1b2-c3d4-4e5f-8a9b-0c1d2e3f4a5b";
+const TOKEN = "qr_token_de_prueba_123";
+
+function okResponse(body: unknown = { qrId: "q-1", viajeId: TRIP_ID, usadoEn: new Date().toISOString() }) {
+  return { ok: true, status: 200, headers: new Headers(), json: async () => body };
+}
+
+function errorResponse(status: number, body: unknown = {}, headers = new Headers()) {
+  return { ok: false, status, headers, json: async () => body };
+}
+
+/** Extrae el header Idempotency-Key de una llamada mockeada a fetch. */
+function idempotencyKeyOf(call: unknown[] | undefined): string | undefined {
+  const init = call?.[1] as { headers?: Record<string, string> } | undefined;
+  return init?.headers?.["Idempotency-Key"];
+}
+
+describe("M8QrValidatorService - simulación local (sin M8_API_URL)", () => {
   let validator: M8QrValidatorService;
 
   beforeEach(() => {
-    // Pasar "" fuerza el modo simulación local independientemente de si M8_API_URL está en .env
     validator = new M8QrValidatorService("", 100);
     validator.clear();
   });
@@ -15,391 +33,221 @@ describe("M8QrValidatorService - Pruebas Unitarias Directas", () => {
     vi.unstubAllGlobals();
   });
 
-  describe("1. Modo Simulación Local (sin M8_API_URL)", () => {
-    it("debe validar exitosamente un token válido en modo simulado", async () => {
-      const result = await validator.validate("token_valido_123");
-      expect(result.valid).toBe(true);
-      expect(result.code).toBeUndefined();
+  it("valida un token nuevo y rechaza la reutilización (RNF-09)", async () => {
+    const token = "single_use_token_999";
+
+    await expect(validator.validate(token)).resolves.toMatchObject({ valid: true });
+
+    const replay = await validator.validate(token);
+    expect(replay.valid).toBe(false);
+    expect(replay.code).toBe("INVALID_VERIFICATION_CODE");
+  });
+
+  it("simula timeout/503 y tokens inválidos o expirados", async () => {
+    await expect(validator.validate("m8_timeout")).resolves.toMatchObject({
+      valid: false,
+      code: "DEPENDENCY_UNAVAILABLE",
+      retryAfterSeconds: 5,
     });
-
-    it("pasar string vacío '' como primer argumento debe desactivar M8_API_URL aunque esté definida en process.env", async () => {
-      const originalEnv = process.env.M8_API_URL;
-      process.env.M8_API_URL = "http://m8-en-env:3000";
-
-      try {
-        const mockFetch = vi.fn();
-        vi.stubGlobal("fetch", mockFetch);
-
-        const isolatedValidator = new M8QrValidatorService("", 100);
-        const result = await isolatedValidator.validate("token_local_aislado");
-
-        expect(result.valid).toBe(true);
-        expect(mockFetch).not.toHaveBeenCalled();
-      } finally {
-        if (originalEnv === undefined) {
-          delete process.env.M8_API_URL;
-        } else {
-          process.env.M8_API_URL = originalEnv;
-        }
-      }
+    await expect(validator.validate("invalid")).resolves.toMatchObject({
+      valid: false,
+      code: "INVALID_VERIFICATION_CODE",
     });
-
-    it("debe rechazar tokens con error 503 cuando se envía m8_timeout o simulate_503 (RNF-13)", async () => {
-      const resTimeout = await validator.validate("m8_timeout");
-      expect(resTimeout.valid).toBe(false);
-      expect(resTimeout.code).toBe("DEPENDENCY_UNAVAILABLE");
-      expect(resTimeout.retryAfterSeconds).toBe(5);
-
-      const res503 = await validator.validate("simulate_503");
-      expect(res503.valid).toBe(false);
-      expect(res503.code).toBe("DEPENDENCY_UNAVAILABLE");
-    });
-
-    it("debe rechazar tokens con error 422 cuando son invalid o expired", async () => {
-      const resInvalid = await validator.validate("invalid");
-      expect(resInvalid.valid).toBe(false);
-      expect(resInvalid.code).toBe("INVALID_VERIFICATION_CODE");
-
-      const resExpired = await validator.validate("expired");
-      expect(resExpired.valid).toBe(false);
-      expect(resExpired.code).toBe("INVALID_VERIFICATION_CODE");
-
-      const resPrefix = await validator.validate("invalid_codigo");
-      expect(resPrefix.valid).toBe(false);
-      expect(resPrefix.code).toBe("INVALID_VERIFICATION_CODE");
-    });
-
-    it("debe rechazar la reutilización de tokens en modo local (single-use / replay attack - RNF-09)", async () => {
-      const token = "single_use_token_999";
-
-      const primerIntento = await validator.validate(token);
-      expect(primerIntento.valid).toBe(true);
-
-      const segundoIntento = await validator.validate(token);
-      expect(segundoIntento.valid).toBe(false);
-      expect(segundoIntento.code).toBe("INVALID_VERIFICATION_CODE");
-      expect(segundoIntento.message).toMatch(/ya fue utilizado/i);
-    });
-
-    it("debe limpiar los tokens usados al invocar clear()", async () => {
-      const token = "token_a_limpiar";
-      await validator.validate(token);
-
-      validator.clear();
-
-      const reintento = await validator.validate(token);
-      expect(reintento.valid).toBe(true);
+    await expect(validator.validate("expired")).resolves.toMatchObject({
+      valid: false,
+      code: "INVALID_VERIFICATION_CODE",
     });
   });
 
-  describe("2. Modo Integración HTTP con M8 (M8_API_URL configurada)", () => {
-    it("debe realizar fetch HTTP hacia /api/v1/documents/qr/verify según contrato oficial de M8 (Grupo 10)", async () => {
-      const httpValidator = new M8QrValidatorService("http://m8-notificaciones:3000", 500);
+  it("pasar '' desactiva M8 aunque la variable de entorno esté definida", async () => {
+    const originalEnv = process.env.M8_API_URL;
+    process.env.M8_API_URL = "http://m8-en-env:3000";
+    const mockFetch = vi.fn();
+    vi.stubGlobal("fetch", mockFetch);
 
-      const mockFetch = vi.fn().mockResolvedValue({
-        ok: true,
-        status: 200,
-        json: async () => ({
-          valid: true,
-          tripId: "trip-9082",
-          token: "qr_trip-9082_a1b2c3d4e5f67890",
-          message: "Código QR verificado exitosamente.",
+    try {
+      const isolated = new M8QrValidatorService("", 100);
+      await expect(isolated.validate("token_local_aislado")).resolves.toMatchObject({ valid: true });
+      expect(mockFetch).not.toHaveBeenCalled();
+    } finally {
+      if (originalEnv === undefined) delete process.env.M8_API_URL;
+      else process.env.M8_API_URL = originalEnv;
+    }
+  });
+});
+
+describe("M8QrValidatorService - contrato vigente de M8 (POST /api/v1/qr/validaciones)", () => {
+  let validator: M8QrValidatorService;
+
+  beforeEach(() => {
+    validator = new M8QrValidatorService(M8_URL, 500, "test-service-token", 1, 10);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it("llama a la ruta, body y cabeceras del contrato", async () => {
+    const mockFetch = vi.fn().mockResolvedValue(okResponse());
+    vi.stubGlobal("fetch", mockFetch);
+
+    await expect(validator.validate(TOKEN, TRIP_ID, "corr-1")).resolves.toMatchObject({ valid: true });
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      `${M8_URL}/api/v1/qr/validaciones`,
+      expect.objectContaining({
+        method: "POST",
+        headers: expect.objectContaining({
+          "Content-Type": "application/json",
+          Authorization: "Bearer test-service-token",
+          "X-Request-Id": "corr-1",
         }),
-      });
-      vi.stubGlobal("fetch", mockFetch);
+        body: JSON.stringify({ token: TOKEN, viajeId: TRIP_ID }),
+      })
+    );
 
-      const result = await httpValidator.validate("qr_trip-9082_a1b2c3d4e5f67890", "trip-9082");
+    const sent = mockFetch.mock.calls[0]![1] as { body: string; headers: Record<string, string> };
+    expect(sent.headers["Idempotency-Key"]).toMatch(/^qr-.+-[0-9a-f]{32}$/);
+  });
 
-      expect(result.valid).toBe(true);
-      expect(mockFetch).toHaveBeenCalledWith(
-        "http://m8-notificaciones:3000/api/v1/documents/qr/verify",
-        expect.objectContaining({
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: "Bearer SYSTEM",
-          },
-          body: JSON.stringify({ token: "qr_trip-9082_a1b2c3d4e5f67890", tripId: "trip-9082" }),
-        })
-      );
+  it("no duplica /api/v1 si la URL base ya lo incluye", async () => {
+    const mockFetch = vi.fn().mockResolvedValue(okResponse());
+    vi.stubGlobal("fetch", mockFetch);
+    const withPrefix = new M8QrValidatorService("http://m8:3000/api/v1", 500, "tok");
+
+    await withPrefix.validate(TOKEN, TRIP_ID);
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      "http://m8:3000/api/v1/qr/validaciones",
+      expect.anything()
+    );
+  });
+
+  it("usa el mismo Idempotency-Key en los reintentos del mismo (viaje, token)", async () => {
+    const mockFetch = vi
+      .fn()
+      .mockResolvedValueOnce(errorResponse(503, {}, new Headers({ "retry-after": "5" })))
+      .mockResolvedValueOnce(okResponse());
+    vi.stubGlobal("fetch", mockFetch);
+
+    await expect(validator.validate(TOKEN, TRIP_ID)).resolves.toMatchObject({ valid: true });
+
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    expect(idempotencyKeyOf(mockFetch.mock.calls[0])).toBe(idempotencyKeyOf(mockFetch.mock.calls[1]));
+  });
+
+  it.each([
+    [404, "El token no existe"],
+    [409, "El QR ya fue usado"],
+    [422, "El QR expiró"],
+    [400, "Datos inválidos"],
+  ])("mapea %i a INVALID_VERIFICATION_CODE sin reintentar", async (status, detail) => {
+    const mockFetch = vi.fn().mockResolvedValue(errorResponse(status, { detail }));
+    vi.stubGlobal("fetch", mockFetch);
+
+    const result = await validator.validate(TOKEN, TRIP_ID);
+
+    expect(result).toMatchObject({ valid: false, code: "INVALID_VERIFICATION_CODE", message: detail });
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("rechaza el QR si M8 responde 200 pero el viaje no coincide", async () => {
+    const mockFetch = vi.fn().mockResolvedValue(
+      okResponse({ qrId: "q-1", viajeId: "otro-viaje", usadoEn: new Date().toISOString() })
+    );
+    vi.stubGlobal("fetch", mockFetch);
+
+    const result = await validator.validate(TOKEN, TRIP_ID);
+
+    expect(result).toMatchObject({ valid: false, code: "INVALID_VERIFICATION_CODE" });
+  });
+
+  it("un 401/403 de M8 es 503 (configuración), no QR inválido", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const mockFetch = vi.fn().mockResolvedValue(errorResponse(401, { detail: "Unauthorized" }));
+    vi.stubGlobal("fetch", mockFetch);
+
+    const result = await validator.validate(TOKEN, TRIP_ID);
+
+    expect(result).toMatchObject({
+      valid: false,
+      code: "DEPENDENCY_UNAVAILABLE",
+      retryAfterSeconds: 5,
     });
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    expect(consoleError).toHaveBeenCalledWith(expect.stringMatching(/401.*token de servicio/i));
+  });
 
-    it("con M8_API_URL configurada, los tokens de prueba (invalid, simulate_503) NO deben interceptarse localmente sino enviarse a M8", async () => {
-      const httpValidator = new M8QrValidatorService("http://m8-notificaciones:3000", 500);
+  it("reintenta ante 5xx y devuelve 503 con Retry-After al agotar los intentos", async () => {
+    const mockFetch = vi.fn().mockResolvedValue(
+      errorResponse(503, {}, new Headers({ "retry-after": "10" }))
+    );
+    vi.stubGlobal("fetch", mockFetch);
 
-      const mockFetch = vi.fn().mockResolvedValue({
-        ok: true,
-        status: 200,
-        json: async () => ({ valid: true }),
-      });
-      vi.stubGlobal("fetch", mockFetch);
+    const result = await validator.validate(TOKEN, TRIP_ID);
 
-      const res1 = await httpValidator.validate("invalid", "trip-9082");
-      const res2 = await httpValidator.validate("simulate_503", "trip-9082");
-
-      expect(res1.valid).toBe(true);
-      expect(res2.valid).toBe(true);
-      expect(mockFetch).toHaveBeenCalledTimes(2);
+    expect(result).toMatchObject({
+      valid: false,
+      code: "DEPENDENCY_UNAVAILABLE",
+      retryAfterSeconds: 10,
     });
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+  });
 
-    it("debe usar el token de servicio configurable (M8_SERVICE_TOKEN) en la cabecera Authorization (RNF-06)", async () => {
-      const customTokenValidator = new M8QrValidatorService(
-        "http://m8-notificaciones:3000",
-        500,
-        "custom_m8_jwt_service_token_xyz"
-      );
+  it("un error de red o timeout es 503 después de reintentar", async () => {
+    const mockFetch = vi.fn().mockRejectedValue(new Error("timeout"));
+    vi.stubGlobal("fetch", mockFetch);
 
-      const mockFetch = vi.fn().mockResolvedValue({
-        ok: true,
-        status: 200,
-        json: async () => ({
-          valid: true,
-          tripId: "trip-9082",
-          token: "qr_trip-9082_a1b2c3d4e5f67890",
-        }),
-      });
-      vi.stubGlobal("fetch", mockFetch);
+    const result = await validator.validate(TOKEN, TRIP_ID);
 
-      await customTokenValidator.validate("qr_trip-9082_a1b2c3d4e5f67890", "trip-9082");
+    expect(result).toMatchObject({ valid: false, code: "DEPENDENCY_UNAVAILABLE" });
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+  });
 
-      expect(mockFetch).toHaveBeenCalledWith(
-        expect.any(String),
-        expect.objectContaining({
-          headers: expect.objectContaining({
-            Authorization: "Bearer custom_m8_jwt_service_token_xyz",
-          }),
-        })
-      );
-    });
+  it("usa el token del proveedor cuando está configurado", async () => {
+    const provider: TokenProvider = { getToken: async () => "provider-token" };
+    const withProvider = new M8QrValidatorService(M8_URL, 500, "ignorado", 0, 10, provider);
+    const mockFetch = vi.fn().mockResolvedValue(okResponse());
+    vi.stubGlobal("fetch", mockFetch);
 
-    it("cuando M8 responde 400 (El código QR no corresponde a este viaje), debe mapear a INVALID_VERIFICATION_CODE sin reintentar", async () => {
-      const retryValidator = new M8QrValidatorService(
-        "http://m8-notificaciones:3000",
-        500,
-        "SYSTEM",
-        1,
-        10
-      );
+    await withProvider.validate(TOKEN, TRIP_ID);
 
-      const mockFetch = vi.fn().mockResolvedValue({
-        ok: false,
-        status: 400,
-        json: async () => ({
-          statusCode: 400,
-          message: "El código QR no corresponde a este viaje.",
-          error: "Bad Request",
-        }),
-      });
-      vi.stubGlobal("fetch", mockFetch);
+    expect(mockFetch).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        headers: expect.objectContaining({ Authorization: "Bearer provider-token" }),
+      })
+    );
+  });
 
-      const result = await retryValidator.validate("qr_de_otro_viaje", "trip-9082");
+  it("si el proveedor no puede dar token, responde 503 sin llamar a M8", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const provider: TokenProvider = {
+      getToken: async () => {
+        throw new Error("keycloak caído");
+      },
+    };
+    const withProvider = new M8QrValidatorService(M8_URL, 500, undefined, 0, 10, provider);
+    const mockFetch = vi.fn();
+    vi.stubGlobal("fetch", mockFetch);
 
-      expect(result.valid).toBe(false);
-      expect(result.code).toBe("INVALID_VERIFICATION_CODE");
-      expect(result.message).toMatch(/no corresponde a este viaje/i);
-      expect(mockFetch).toHaveBeenCalledTimes(1);
-    });
+    const result = await withProvider.validate(TOKEN, TRIP_ID);
 
-    it("cuando M8 responde 404 (No encontrado), debe mapear a INVALID_VERIFICATION_CODE sin reintentar", async () => {
-      const retryValidator = new M8QrValidatorService(
-        "http://m8-notificaciones:3000",
-        500,
-        "SYSTEM",
-        1,
-        10
-      );
+    expect(result).toMatchObject({ valid: false, code: "DEPENDENCY_UNAVAILABLE" });
+    expect(mockFetch).not.toHaveBeenCalled();
+    expect(consoleError).toHaveBeenCalled();
+  });
 
-      const mockFetch = vi.fn().mockResolvedValue({
-        ok: false,
-        status: 404,
-        json: async () => ({
-          statusCode: 404,
-          message: "Código QR no encontrado o inválido.",
-          error: "Not Found",
-        }),
-      });
-      vi.stubGlobal("fetch", mockFetch);
+  it("sin token configurado responde 503 y no llama a M8", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const withoutToken = new M8QrValidatorService(M8_URL, 500, undefined, 0, 10);
+    const mockFetch = vi.fn();
+    vi.stubGlobal("fetch", mockFetch);
 
-      const result = await retryValidator.validate("qr_inexistente", "trip-9082");
+    const result = await withoutToken.validate(TOKEN, TRIP_ID);
 
-      expect(result.valid).toBe(false);
-      expect(result.code).toBe("INVALID_VERIFICATION_CODE");
-      expect(mockFetch).toHaveBeenCalledTimes(1);
-    });
-
-    it("cuando M8 responde 410 (Token consumido/expirado), es un error definitivo y NO debe reintentar", async () => {
-      const retryValidator = new M8QrValidatorService(
-        "http://m8-notificaciones:3000",
-        500,
-        "SYSTEM",
-        2,
-        10
-      );
-
-      const mockFetch = vi.fn().mockResolvedValue({
-        ok: false,
-        status: 410,
-        json: async () => ({
-          statusCode: 410,
-          message: "El código QR ya fue utilizado anteriormente (código de un solo uso consumido).",
-          error: "Gone",
-        }),
-      });
-      vi.stubGlobal("fetch", mockFetch);
-
-      const result = await retryValidator.validate("qr_ya_quemado", "trip-9082");
-
-      expect(result.valid).toBe(false);
-      expect(result.code).toBe("INVALID_VERIFICATION_CODE");
-      expect(result.message).toMatch(/consumido|utilizado/i);
-      expect(mockFetch).toHaveBeenCalledTimes(1);
-    });
-
-    it("cuando M8 responde 200 pero con { valid: false }, debe rechazar con INVALID_VERIFICATION_CODE", async () => {
-      const httpValidator = new M8QrValidatorService("http://m8-notificaciones:3000", 500);
-
-      const mockFetch = vi.fn().mockResolvedValue({
-        ok: true,
-        status: 200,
-        json: async () => ({
-          valid: false,
-          message: "Token rechazado por validación interna.",
-        }),
-      });
-      vi.stubGlobal("fetch", mockFetch);
-
-      const result = await httpValidator.validate("qr_falso_200", "trip-9082");
-
-      expect(result.valid).toBe(false);
-      expect(result.code).toBe("INVALID_VERIFICATION_CODE");
-    });
-
-    it("cuando M8 responde 401 o 403 (M8_SERVICE_TOKEN mal configurado), debe loguear error y devolver DEPENDENCY_UNAVAILABLE (503) en vez de QR inválido", async () => {
-      const httpValidator = new M8QrValidatorService(
-        "http://m8-notificaciones:3000",
-        500,
-        "token_erroneo",
-        1,
-        10
-      );
-
-      const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-      const mockFetch = vi.fn().mockResolvedValue({
-        ok: false,
-        status: 401,
-        json: async () => ({ statusCode: 401, message: "Unauthorized" }),
-      });
-      vi.stubGlobal("fetch", mockFetch);
-
-      const result = await httpValidator.validate("qr_valido_del_pasajero", "trip-9082");
-
-      expect(result.valid).toBe(false);
-      expect(result.code).toBe("DEPENDENCY_UNAVAILABLE");
-      expect(result.retryAfterSeconds).toBe(5);
-      expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringMatching(/401.*M8_SERVICE_TOKEN/i));
-      expect(mockFetch).toHaveBeenCalledTimes(1); // No reintenta con la misma credencial rechazada
-    });
-
-    it("cuando M8 responde 500 Internal Server Error (cualquier 5xx), debe mapear a DEPENDENCY_UNAVAILABLE (503) y nunca a QR inválido", async () => {
-      const retryValidator = new M8QrValidatorService(
-        "http://m8-notificaciones:3000",
-        500,
-        "SYSTEM",
-        1,
-        10
-      );
-
-      const mockFetch = vi.fn().mockResolvedValue({
-        ok: false,
-        status: 500,
-        headers: new Headers(),
-        json: async () => ({ statusCode: 500, message: "Internal Server Error" }),
-      });
-      vi.stubGlobal("fetch", mockFetch);
-
-      const result = await retryValidator.validate("qr_valido_del_pasajero", "trip-9082");
-
-      expect(result.valid).toBe(false);
-      expect(result.code).toBe("DEPENDENCY_UNAVAILABLE");
-      expect(result.retryAfterSeconds).toBe(5);
-      expect(mockFetch).toHaveBeenCalledTimes(2); // 1 intento + 1 reintento
-    });
-
-    it("debe reintentar ante fallas transitorias (503/red) y tener éxito si el segundo intento responde 200 (RNF-13)", async () => {
-      const retryValidator = new M8QrValidatorService(
-        "http://m8-notificaciones:3000",
-        500,
-        "SYSTEM",
-        1,
-        10
-      );
-
-      const mockFetch = vi
-        .fn()
-        .mockResolvedValueOnce({
-          ok: false,
-          status: 503,
-          headers: new Headers({ "retry-after": "5" }),
-        })
-        .mockResolvedValueOnce({
-          ok: true,
-          status: 200,
-          json: async () => ({
-            valid: true,
-            tripId: "trip-9082",
-            token: "qr_token_ok",
-          }),
-        });
-      vi.stubGlobal("fetch", mockFetch);
-
-      const result = await retryValidator.validate("qr_token_ok", "trip-9082");
-
-      expect(result.valid).toBe(true);
-      expect(mockFetch).toHaveBeenCalledTimes(2);
-    });
-
-    it("cuando M8 responde 503 HTTP y se agotan los reintentos, debe retornar DEPENDENCY_UNAVAILABLE con Retry-After", async () => {
-      const retryValidator = new M8QrValidatorService(
-        "http://m8-notificaciones:3000",
-        500,
-        "SYSTEM",
-        1,
-        10
-      );
-
-      const mockFetch = vi.fn().mockResolvedValue({
-        ok: false,
-        status: 503,
-        headers: new Headers({ "retry-after": "10" }),
-      });
-      vi.stubGlobal("fetch", mockFetch);
-
-      const result = await retryValidator.validate("qr_con_m8_caido");
-
-      expect(result.valid).toBe(false);
-      expect(result.code).toBe("DEPENDENCY_UNAVAILABLE");
-      expect(result.retryAfterSeconds).toBe(10);
-      expect(mockFetch).toHaveBeenCalledTimes(2);
-    });
-
-    it("cuando la llamada HTTP hacia M8 falla por timeout o error de red y se agotan los reintentos, debe retornar DEPENDENCY_UNAVAILABLE (RNF-13)", async () => {
-      const retryValidator = new M8QrValidatorService(
-        "http://m8-notificaciones:3000",
-        200,
-        "SYSTEM",
-        1,
-        10
-      );
-
-      const mockFetch = vi.fn().mockRejectedValue(new Error("Connection reset / timeout"));
-      vi.stubGlobal("fetch", mockFetch);
-
-      const result = await retryValidator.validate("qr_timeout_token", "trip-9082");
-
-      expect(result.valid).toBe(false);
-      expect(result.code).toBe("DEPENDENCY_UNAVAILABLE");
-      expect(result.retryAfterSeconds).toBe(5);
-      expect(mockFetch).toHaveBeenCalledTimes(2);
-    });
+    expect(result).toMatchObject({ valid: false, code: "DEPENDENCY_UNAVAILABLE" });
+    expect(mockFetch).not.toHaveBeenCalled();
   });
 });

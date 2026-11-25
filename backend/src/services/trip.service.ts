@@ -258,7 +258,7 @@ export class TripService {
     this.validateStateTransition(trip.state, TripState.IN_PROGRESS, auth.role);
 
     // Validación contra M8 (RF-6.4 / RNF-13 / RNF-09)
-    const validation = await this.qrValidator.validate(verificationToken, tripId);
+    const validation = await this.qrValidator.validate(verificationToken, tripId, correlationId);
     if (!validation.valid) {
       if (validation.code === "DEPENDENCY_UNAVAILABLE") {
         throw new ApiError(

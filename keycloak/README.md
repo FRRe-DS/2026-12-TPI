@@ -20,7 +20,7 @@ inicio de viaje con cliente y conductor reales.
 | Usuarios de desarrollo | `cliente1` (CLIENTE), `conductor1` (CONDUCTOR), `operador1` (OPERADOR) |
 | IDs fijos | `cliente1` = `c1e00000-0000-4000-8000-000000000001`; `conductor1` = `c0d00000-0000-4000-8000-000000000001`; `operador1` = `0be00000-0000-4000-8000-000000000001`. Se usan como `clientId` / `driverId` en los viajes |
 | Contraseñas | `<usuario>-contrasena-de-desarrollo` (por ejemplo, `conductor1-contrasena-de-desarrollo`) |
-| `SERVICIO` en cuentas de servicio | `grupo-01` y `grupo-17` (M2) y `grupo-04` / `grupo-13` (M5), los módulos que llaman a M6 |
+| `SERVICIO` en cuentas de servicio | `grupo-01` y `grupo-17` (M2), `grupo-04` / `grupo-13` (M5) y `grupo-05` / `grupo-12` (M6), los módulos que se llaman entre sí |
 | Cliente `m6-desarrollo` | Cliente público solo para pedir tokens de persona con usuario y contraseña en desarrollo |
 | Scopes | Iguales a los de la cátedra (`clientes:*`, `conductores:*`); M6 no los usa para autorizar |
 

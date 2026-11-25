@@ -84,6 +84,15 @@ services:
       AUTH_ISSUER: ${AUTH_ISSUER:-http://localhost:8081/realms/ds-2026-realm}
       AUTH_JWKS_URI: ${AUTH_JWKS_URI:-http://keycloak:8080/realms/ds-2026-realm/protocol/openid-connect/certs}
       AUTH_JWKS_TIMEOUT_MS: ${AUTH_JWKS_TIMEOUT_MS:-3000}
+      # Token de servicio de M6 (client_credentials). Sin secreto, el QR contra un M8 real da 503.
+      AUTH_CLIENT_ID: ${AUTH_CLIENT_ID:-grupo-12}
+      AUTH_CLIENT_SECRET: ${AUTH_CLIENT_SECRET:-}
+      AUTH_TOKEN_URL: ${AUTH_TOKEN_URL:-http://keycloak:8080/realms/ds-2026-realm/protocol/openid-connect/token}
+      # M8: sin URL se usa la simulacion local del QR.
+      M8_API_URL: ${M8_API_URL:-}
+      M8_TIMEOUT_MS: ${M8_TIMEOUT_MS:-3000}
+      M8_MAX_RETRIES: ${M8_MAX_RETRIES:-1}
+      M8_RETRY_DELAY_MS: ${M8_RETRY_DELAY_MS:-150}
     ports:
       - "3006:3006"
 

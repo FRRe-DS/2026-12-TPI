@@ -306,7 +306,7 @@ Hay **un único evento de cancelación**. Quién canceló (`cancelledBy`), el mo
 | `secondsSinceCreation` | integer | Antigüedad del viaje al cancelarse; insumo del cargo de cancelación (RF-7.4). |
 
 ### Dependencias Síncronas Salientes
-* **M8:** validación del token / QR de un solo uso en `POST /trips/{id}/start` delegada en `M8QrValidatorService` mediante `POST /api/v1/documents/qr/verify` (o simulación en memoria si `M8_API_URL` no está definida). Soporta token de servicio configurable (`M8_SERVICE_TOKEN`), timeout (`M8_TIMEOUT_MS`) y reintentos limitados ante fallas de red o `5xx` (RNF-13). Los rechazos de negocio de M8 (`400`, `404`, `410`) se traducen a `422 INVALID_VERIFICATION_CODE` sin reintentar; en cambio, cualquier falla `5xx`, timeout o error de autenticación inter-servicio (`401`/`403`, registrado en log) responde `503 DEPENDENCY_UNAVAILABLE` con cabecera `Retry-After: 5` sin alterar el estado del viaje ni mostrar falsamente al conductor que el QR es inválido.
+* **M8:** validación del token / QR de un solo uso en `POST /trips/{id}/start` delegada en `M8QrValidatorService` mediante el contrato vigente de M8: `POST /api/v1/qr/validaciones` con `{ token, viajeId }` y `Idempotency-Key` obligatorio (derivado de `viajeId` + token, para que un reintento tras un timeout no termine en `409`). La respuesta `200` trae `{ qrId, viajeId, usadoEn }`. Los errores de negocio de M8 (`400`, `404`, `409`, `422`) se traducen a `422 INVALID_VERIFICATION_CODE` sin reintentar; `401`/`403` (credencial de servicio inválida) y las fallas `5xx`, `408`, `429`, timeout o red se traducen a `503 DEPENDENCY_UNAVAILABLE` con `Retry-After`, sin alterar el estado del viaje (RNF-13). El token de servicio se pide al emisor con `client_credentials` (`AUTH_CLIENT_ID` / `AUTH_CLIENT_SECRET`) y se cachea; `M8_SERVICE_TOKEN` queda solo como atajo de desarrollo. Sin `M8_API_URL` se usa la simulación local en memoria.
 * **M1:** validación de la firma RS256 contra el JWKS de Keycloak, más `iss`, `exp` y la traducción de roles (RF-1.4 / RNF-12). Las claves se cachean 10 minutos y se refrescan si aparece un `kid` nuevo; si M1 no responde se devuelve `503` con `Retry-After`.
 
 ---
@@ -339,7 +339,7 @@ Hay **un único evento de cancelación**. Quién canceló (`cancelledBy`), el mo
 | Permisos por módulo | Cualquier rol `*-be` se trata como `SYSTEM`; falta restringir por operación (por ejemplo, solo `solicitud-be` de M5 crea viajes) | Endurecer la autorización por operación (RF-1.4) |
 | `503` por M1 no declarado en el contrato | La validación devuelve `503 DEPENDENCY_UNAVAILABLE` si el JWKS no responde, pero solo `/trips/{tripId}/start` declara ese código en `openapi.yaml` | Agregarlo al resto de las operaciones y avisar al G5 (RNF-03) |
 | Realm no compartido con la cátedra | El `docker-compose.yml` levanta un Keycloak propio en `localhost:8081` con un realm derivado (roles y usuarios de desarrollo), porque el de la cátedra no tiene roles de usuario | Si la cátedra o M1 publican esos roles en el realm compartido, migrar y apuntar `AUTH_ISSUER` / `AUTH_JWKS_URI` a esa instancia (RNF-04 / RNF-18) |
-| Validación del QR contra M8 | `M8QrValidatorService` implementa la llamada HTTP oficial a M8 (`POST /api/v1/documents/qr/verify`) con quemado atómico garantizado por M8 (Redis con TTL y 410 Gone). En modo local/desarrollo sin M8, la simulación usa un cache en memoria | En modo local sin M8, los tokens consumidos en memoria se pierden al reiniciar; en producción, M8 es la fuente de verdad. Queda a coordinar con M8 (Grupo 10) si `/documents/qr/verify` es idempotente ante reintentos por timeout para el mismo `(tripId, token)` (RF-6.4 / RNF-09 / RNF-13) |
+| Validación del QR contra M8 | `M8QrValidatorService` implementa el contrato vigente (`POST /api/v1/qr/validaciones` con `{ token, viajeId }` e `Idempotency-Key` derivado de `viajeId` + token). Sin `M8_API_URL` usa la simulación en memoria | Falta probarlo contra el M8 real cuando esté disponible. El contrato fija que la validación es atómica y que repetir el `Idempotency-Key` devuelve la respuesta original; hay que confirmarlo con el Grupo 10 (RF-6.4 / RNF-09 / RNF-13) |
 | Bus de eventos | En memoria (`event-publisher.service.ts`), guarda los últimos 100 | Se pierde al reiniciar el servidor; queda para la iteración con RabbitMQ (RNF-10) |
 | RabbitMQ, Redis y outbox | No están integrados: `/health/details` los informa como `NOT_CONFIGURED` y `outbox` como `null` | Hasta entonces no hay entrega garantizada de eventos ni estado compartido entre instancias |
 | Límite de pedidos | Se cuenta en memoria dentro de cada proceso | Con varias instancias del servicio cada una cuenta por separado; con Redis sería compartido (RNF-12) |
@@ -450,11 +450,14 @@ Si después se quiere correr el backend localmente con `npm run dev` (Opción B)
    | `DATABASE_URL` | (obligatoria) | Conexión a PostgreSQL. |
    | `PORT` | `3006` | Puerto del servidor (RNF-06). |
    | `CLIENT_NO_SHOW_MINUTES` | `5` | Minutos desde el arribo para aceptar `CLIENT_NO_SHOW`. |
-   | `M8_API_URL` | desactivada | URL base del módulo M8 para validación de QR (RF-6.4). Si no se indica, usa simulación en memoria. |
-   | `M8_TIMEOUT_MS` | `3000` | Timeout en milisegundos para la llamada de validación contra M8 (RNF-13). |
-   | `M8_SERVICE_TOKEN` | `SYSTEM` | Token de autorización de servicio a servicio (`Authorization: Bearer <token>`) enviado a M8 (RNF-06). |
-   | `M8_MAX_RETRIES` | `1` | Cantidad de reintentos ante fallas transitorias de red o HTTP 503/504 de M8 (RNF-13). |
-   | `M8_RETRY_DELAY_MS` | `150` | Espera en milisegundos entre reintentos contra M8. |
+   | `M8_API_URL` | desactivada | URL base de M8 (sin `/api/v1`). Si no se indica, usa simulación en memoria. |
+   | `M8_TIMEOUT_MS` | `3000` | Timeout por intento contra M8 (RNF-13). |
+   | `M8_MAX_RETRIES` | `1` | Reintentos ante fallas transitorias de red, `408`, `429` o `5xx`. |
+   | `M8_RETRY_DELAY_MS` | `150` | Espera en milisegundos entre reintentos. |
+   | `M8_SERVICE_TOKEN` | vacío | Atajo de desarrollo: fuerza un token fijo hacia M8. En integración real se usa `client_credentials`. |
+   | `AUTH_CLIENT_ID` | vacío | Cliente de M6 para pedir el token de servicio (por ejemplo `grupo-12`). |
+   | `AUTH_CLIENT_SECRET` | vacío | Secreto de ese cliente. Sin esto, el QR contra un M8 real responde `503`. |
+   | `AUTH_TOKEN_URL` | derivada del JWKS | Endpoint de token del emisor. En el compose apunta a `keycloak:8080`. |
    | `RATE_LIMIT_USER_PER_MIN` | `120` | Pedidos por minuto para usuarios. |
    | `RATE_LIMIT_SERVICE_PER_MIN` | `1200` | Pedidos por minuto para servicios (`SYSTEM`). |
    | `ENABLE_DEMO_AUTH` | desactivado | Habilita los atajos de demo (`Bearer SYSTEM`, `X-Actor-Role`, `/api/demo-tokens`). Solo desarrollo. |

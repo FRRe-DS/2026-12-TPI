@@ -549,7 +549,8 @@
       "enabled": true,
       "serviceAccountClientId": "grupo-05",
       "realmRoles": [
-        "viajes-be"
+        "viajes-be",
+        "SERVICIO"
       ]
     },
     {
@@ -605,7 +606,8 @@
       "enabled": true,
       "serviceAccountClientId": "grupo-12",
       "realmRoles": [
-        "viajes-be"
+        "viajes-be",
+        "SERVICIO"
       ]
     },
     {
@@ -672,7 +674,7 @@
     },
     {
       "id": "c1e00000-0000-4000-8000-000000000001",
-      "createdTimestamp": 1795617000516,
+      "createdTimestamp": 1795637991708,
       "username": "cliente1",
       "enabled": true,
       "totp": false,
@@ -684,8 +686,8 @@
         {
           "type": "password",
           "userLabel": "Contrasena de desarrollo",
-          "createdDate": 1795617000521,
-          "secretData": "{\"value\":\"xDqT5wqldihAdMasCEZtpajzmF58cm4piLI07vrv1xY=\",\"salt\":\"qkdsZAdtwdyEDQBBygwpHQ==\",\"additionalParameters\":{}}",
+          "createdDate": 1795637991717,
+          "secretData": "{\"value\":\"fFIeQIvBBcOmkcpxhYDJRuS8JK5BIoqeRaRiBO5Z93M=\",\"salt\":\"0yjQvSkRl0LDVKJi/3lzxA==\",\"additionalParameters\":{}}",
           "credentialData": "{\"hashIterations\":27500,\"algorithm\":\"pbkdf2-sha256\",\"additionalParameters\":{}}"
         }
       ],
@@ -699,7 +701,7 @@
     },
     {
       "id": "c0d00000-0000-4000-8000-000000000001",
-      "createdTimestamp": 1795617000522,
+      "createdTimestamp": 1795637991717,
       "username": "conductor1",
       "enabled": true,
       "totp": false,
@@ -711,8 +713,8 @@
         {
           "type": "password",
           "userLabel": "Contrasena de desarrollo",
-          "createdDate": 1795617000526,
-          "secretData": "{\"value\":\"MdkcQEN2iJYTSadiDOAh/54SvX5fiaVM7c9y2EPXC3E=\",\"salt\":\"5smnSCoUTsAoemoD5m5FSw==\",\"additionalParameters\":{}}",
+          "createdDate": 1795637991725,
+          "secretData": "{\"value\":\"76zz29J+vTjNekFT039wMkToudwR0//UnaxfIao4JBw=\",\"salt\":\"c5MFCT+sD+f9Yolmn3swQg==\",\"additionalParameters\":{}}",
           "credentialData": "{\"hashIterations\":27500,\"algorithm\":\"pbkdf2-sha256\",\"additionalParameters\":{}}"
         }
       ],
@@ -726,7 +728,7 @@
     },
     {
       "id": "0be00000-0000-4000-8000-000000000001",
-      "createdTimestamp": 1795617000526,
+      "createdTimestamp": 1795637991725,
       "username": "operador1",
       "enabled": true,
       "totp": false,
@@ -738,8 +740,8 @@
         {
           "type": "password",
           "userLabel": "Contrasena de desarrollo",
-          "createdDate": 1795617000531,
-          "secretData": "{\"value\":\"7yZWySX73nmb0G/bcdLZS4y4M+6nabzQ8qb9GeRpYIk=\",\"salt\":\"AdGczzEK5TupbacVNFhAXw==\",\"additionalParameters\":{}}",
+          "createdDate": 1795637991733,
+          "secretData": "{\"value\":\"3AnpxHPl+kChfRqi1myaYrZHTMHO3Hqt87PvAmLohxI=\",\"salt\":\"ni2E1IsTsQuy8xLA9UEpFA==\",\"additionalParameters\":{}}",
           "credentialData": "{\"hashIterations\":27500,\"algorithm\":\"pbkdf2-sha256\",\"additionalParameters\":{}}"
         }
       ],
