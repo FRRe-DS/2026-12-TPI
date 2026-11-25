@@ -192,9 +192,10 @@ La especificación detallada de los endpoints se encuentra definida bajo el est�
 | **Creación** | `POST /trips` responde `201` con `Location: /trips/{id}` y el `ETag` del viaje. |
 
 ### Seguridad (RNF-12)
-* **Autenticación:** JWT de M1 en `Authorization: Bearer <token>`. El token debe tener `sub`, `role` (o `roles`) y vencimiento (`exp`). Sin `exp`, o vencido, se responde `401`.
-* **Atajos de demostración:** el header `X-Actor-Role` / `X-Actor-Id` sin token y los tokens rápidos (`Bearer SYSTEM`, `Bearer DRIVER:<id>`) **solo funcionan con `ENABLE_DEMO_AUTH=true`**, pensado para desarrollo. Sin esa variable (o con cualquier otro valor) se responden `401`, y `/api/demo-tokens` del panel responde `404`. En cualquier entorno publicado debe quedar en `false`.
-* **Pendiente:** hoy no se valida la firma del JWT (ver pendientes conocidos).
+* **Autenticación:** JWT de M1 (Keycloak) en `Authorization: Bearer <token>`. Se valida la **firma RS256** contra el JWKS de M1 y además `iss`, `exp`, `nbf`, `iat` y, si se configura, `aud`. Un token inválido o vencido responde `401 UNAUTHENTICATED`; si M1 no responde se responde `503 DEPENDENCY_UNAVAILABLE` con `Retry-After` (RNF-13), para no hacerle creer al cliente que su token es inválido.
+* **Roles:** Keycloak emite un rol por módulo (`solicitud-be`, `viajes-be`, ...) en el claim `roles`; cualquiera de ellos se traduce a `SYSTEM`. Si el token también trae un rol de usuario (`CLIENTE`, `CONDUCTOR`, `OPERADOR`), ese tiene prioridad. En los tokens de servicio la identidad (`actorId`) es el cliente (`azp`, por ejemplo `grupo-05`), no el `sub`.
+* **Configuración:** `AUTH_ISSUER` (por defecto el realm compartido `http://localhost:8080/realms/ds-2026-realm`), `AUTH_JWKS_URI`, `AUTH_AUDIENCE` (opcional), `AUTH_JWKS_TIMEOUT_MS`, `AUTH_JWKS_CACHE_MS` y `AUTH_CLOCK_TOLERANCE_SEC`. Las claves se cachean y se refrescan si aparece un `kid` nuevo. El `docker-compose.yml` del módulo levanta su propio Keycloak en `http://localhost:8081` con un realm derivado del de la cátedra y ya setea estas variables; ver [`keycloak/README.md`](keycloak/README.md).
+* **Atajos de demostración:** el header `X-Actor-Role` / `X-Actor-Id` sin token, los tokens rápidos (`Bearer SYSTEM`, `Bearer DRIVER:<id>`) y los JWT del panel (`/api/demo-tokens`) **solo funcionan con `ENABLE_DEMO_AUTH=true`**, pensado para desarrollo. Sin esa variable (o con cualquier otro valor) se responden `401`, y `/api/demo-tokens` del panel responde `404`. En cualquier entorno publicado debe quedar en `false`.
 
 ### Health checks (RNF-14)
 `GET /health/details` verifica PostgreSQL con un timeout de 1,5 s y devuelve un `HealthReport`:
@@ -292,7 +293,7 @@ Hay **un único evento de cancelación**. Quién canceló (`cancelledBy`), el mo
 
 ### Dependencias Síncronas Salientes
 * **M8:** validación del token / QR de un solo uso en `POST /trips/{id}/start` delegada en `M8QrValidatorService` mediante `POST /api/v1/documents/qr/verify` (o simulación en memoria si `M8_API_URL` no está definida). Soporta token de servicio configurable (`M8_SERVICE_TOKEN`), timeout (`M8_TIMEOUT_MS`) y reintentos limitados ante fallas de red o `5xx` (RNF-13). Los rechazos de negocio de M8 (`400`, `404`, `410`) se traducen a `422 INVALID_VERIFICATION_CODE` sin reintentar; en cambio, cualquier falla `5xx`, timeout o error de autenticación inter-servicio (`401`/`403`, registrado en log) responde `503 DEPENDENCY_UNAVAILABLE` con cabecera `Retry-After: 5` sin alterar el estado del viaje ni mostrar falsamente al conductor que el QR es inválido.
-* **M1:** validación del JWT y sus claims (`sub`, `role`, `exp`) en cada operación protegida (RF-1.4).
+* **M1:** validación de la firma RS256 contra el JWKS de Keycloak, más `iss`, `exp` y la traducción de roles (RF-1.4 / RNF-12). Las claves se cachean 10 minutos y se refrescan si aparece un `kid` nuevo; si M1 no responde se devuelve `503` con `Retry-After`.
 
 ---
 
@@ -320,7 +321,10 @@ Hay **un único evento de cancelación**. Quién canceló (`cancelledBy`), el mo
 
 | Tema | Estado | Impacto |
 | :--- | :--- | :--- |
-| Verificación de la firma del JWT | Hoy se decodifica el token y se leen `sub`, `role` y `exp`, pero **no se valida la firma**: un token fabricado con rol `SYSTEM` sería aceptado | Depende de M1 (clave pública / JWKS). Es el pendiente más importante antes de un entorno real (RF-1.4 / RNF-06) |
+| Roles de usuario en el realm de la cátedra | El realm solo define roles de módulo (`*-be`); no existen `CLIENTE`, `CONDUCTOR` ni `OPERADOR`, y no hay usuarios con esos roles | Sin eso no se puede probar un inicio de viaje con cliente y conductor reales; depende de M1 / la cátedra (RF-1.3 / RNF-12) |
+| Permisos por módulo | Cualquier rol `*-be` se trata como `SYSTEM`; falta restringir por operación (por ejemplo, solo `solicitud-be` de M5 crea viajes) | Endurecer la autorización por operación (RF-1.4) |
+| `503` por M1 no declarado en el contrato | La validación devuelve `503 DEPENDENCY_UNAVAILABLE` si el JWKS no responde, pero solo `/trips/{tripId}/start` declara ese código en `openapi.yaml` | Agregarlo al resto de las operaciones y avisar al G5 (RNF-03) |
+| Realm no compartido con la cátedra | El `docker-compose.yml` levanta un Keycloak propio en `localhost:8081` con un realm derivado (roles y usuarios de desarrollo), porque el de la cátedra no tiene roles de usuario | Si la cátedra o M1 publican esos roles en el realm compartido, migrar y apuntar `AUTH_ISSUER` / `AUTH_JWKS_URI` a esa instancia (RNF-04 / RNF-18) |
 | Validación del QR contra M8 | `M8QrValidatorService` implementa la llamada HTTP oficial a M8 (`POST /api/v1/documents/qr/verify`) con quemado atómico garantizado por M8 (Redis con TTL y 410 Gone). En modo local/desarrollo sin M8, la simulación usa un cache en memoria | En modo local sin M8, los tokens consumidos en memoria se pierden al reiniciar; en producción, M8 es la fuente de verdad. Queda a coordinar con M8 (Grupo 10) si `/documents/qr/verify` es idempotente ante reintentos por timeout para el mismo `(tripId, token)` (RF-6.4 / RNF-09 / RNF-13) |
 | Bus de eventos | En memoria (`event-publisher.service.ts`), guarda los últimos 100 | Se pierde al reiniciar el servidor; queda para la iteración con RabbitMQ (RNF-10) |
 | RabbitMQ, Redis y outbox | No están integrados: `/health/details` los informa como `NOT_CONFIGURED` y `outbox` como `null` | Hasta entonces no hay entrega garantizada de eventos ni estado compartido entre instancias |
@@ -377,19 +381,26 @@ Hay **un único evento de cancelación**. Quién canceló (`cancelledBy`), el mo
 
 ### Opción A: todo con Docker (sin instalar Node)
 
-Levanta PostgreSQL y el backend en contenedores. Desde la raíz del repositorio:
+Levanta PostgreSQL, Keycloak (identidad) y el backend en contenedores. Desde la raíz del repositorio:
 
-1. Crear el archivo `.env` en la **raíz**, copiado de `.env.example`, con `POSTGRES_USER`, `POSTGRES_PASSWORD` y `POSTGRES_DB`. El `backend/.env` **no hace falta** en Docker: Compose le pasa al contenedor las variables que necesita (`DATABASE_URL` apuntando al servicio `db`, `PORT` y `ENABLE_DEMO_AUTH`).
+1. Crear el archivo `.env` en la **raíz**, copiado de `.env.example`, con `POSTGRES_USER`, `POSTGRES_PASSWORD` y `POSTGRES_DB`. Las variables de Keycloak (`KEYCLOAK_*`) tienen valores de desarrollo en `compose`, así que se pueden omitir. El `backend/.env` **no hace falta** en Docker: Compose le pasa al contenedor las variables que necesita (`DATABASE_URL` apuntando al servicio `db`, `PORT`, `ENABLE_DEMO_AUTH` y las de autenticación `AUTH_ISSUER` / `AUTH_JWKS_URI`).
 2. Construir y levantar:
    ```bash
    docker compose up -d --build
    ```
    Al arrancar, el contenedor del backend aplica las migraciones pendientes (`prisma migrate deploy`) y luego inicia el servidor.
-3. Verificar: `http://localhost:3006/health/details` debe responder `status: OK`. El panel visual está en `http://localhost:3006` y Swagger en `http://localhost:3006/docs`.
-4. Detener:
+3. Verificar: `http://localhost:3006/health/details` debe responder `status: OK`. El panel visual está en `http://localhost:3006` y Swagger en `http://localhost:3006/docs`. Keycloak queda en `http://localhost:8081` (consola de administración y emisor de tokens).
+4. Pedir un token de prueba (usuario `conductor1`, contraseña `conductor1-contrasena-de-desarrollo`):
+   ```powershell
+   curl.exe -s http://localhost:8081/realms/ds-2026-realm/protocol/openid-connect/token `
+     -d grant_type=password -d client_id=m6-desarrollo `
+     -d username=conductor1 -d password=conductor1-contrasena-de-desarrollo
+   ```
+   El realm, los usuarios y por qué se derivó del de la cátedra están en [`keycloak/README.md`](keycloak/README.md).
+5. Detener:
    ```bash
-   docker compose down        # conserva los datos de la base
-   docker compose down -v     # borra también los datos (volumen m6_pgdata)
+   docker compose down        # conserva los datos de las dos bases
+   docker compose down -v     # borra también los datos (volúmenes m6_pgdata y m6_keycloak_pgdata)
    ```
 
 Si después se quiere correr el backend localmente con `npm run dev` (Opción B), primero hay que liberar el puerto 3006: `docker compose stop backend`.
@@ -433,6 +444,12 @@ Si después se quiere correr el backend localmente con `npm run dev` (Opción B)
    | `RATE_LIMIT_USER_PER_MIN` | `120` | Pedidos por minuto para usuarios. |
    | `RATE_LIMIT_SERVICE_PER_MIN` | `1200` | Pedidos por minuto para servicios (`SYSTEM`). |
    | `ENABLE_DEMO_AUTH` | desactivado | Habilita los atajos de demo (`Bearer SYSTEM`, `X-Actor-Role`, `/api/demo-tokens`). Solo desarrollo. |
+   | `AUTH_ISSUER` | `http://localhost:8080/realms/ds-2026-realm` | Emisor (`iss`) esperado en el JWT. Con el Keycloak del módulo (`Opción A` o `docker compose up -d keycloak-db keycloak`) usar `http://localhost:8081/realms/ds-2026-realm`. |
+   | `AUTH_JWKS_URI` | derivada del emisor | URL del JWKS. Solo hace falta si el backend corre en contenedor y baja las claves por la red interna. |
+   | `AUTH_AUDIENCE` | vacío | Audiencia esperada; el realm actual no emite `aud`, así que se deja vacía. |
+   | `AUTH_JWKS_TIMEOUT_MS` | `3000` | Timeout para bajar el JWKS (RNF-13). |
+   | `AUTH_JWKS_CACHE_MS` | `600000` | Cuánto se conservan las claves en memoria. |
+   | `AUTH_CLOCK_TOLERANCE_SEC` | `5` | Tolerancia de reloj al validar `exp` / `nbf` / `iat`. |
    | `APP_VERSION` | versión de `package.json` | Versión que informa `/health/details`. |
 
 3. **Levantar la base de datos PostgreSQL con Docker (RNF-04), desde la raíz del repositorio:**
@@ -486,6 +503,7 @@ Cada requisito funcional tiene su propio test, con el nombre `rf-6.x-...`. Todos
 | RF-6.4 Inicio validado | `npx vitest run tests/rf-6.4-start-trip.test.ts tests/m8-qr-validator.test.ts` | — |
 | RF-6.6 Cancelación por cliente | `npx vitest run tests/rf-6.6-cancelacion-cliente.test.ts` | `npx vitest run --config vitest.integration.config.ts tests/integration/rf-6.6-cancelacion-cliente.test.ts` |
 | RF-6.8 Historial de transiciones | `npx vitest run tests/rf-6.8-trip-history.test.ts` | — |
+| Autenticación JWT (M1) | `npx vitest run tests/auth.test.ts tests/jwt-verifier.test.ts` | `npx vitest run --config vitest.integration.config.ts tests/integration/health-and-auth.test.ts` |
 
 > **Para el equipo:** cuando termines el test de tu requisito, agregá tu fila a esta tabla con el mismo formato. Si tu requisito tiene un solo tipo de test (solo unitario o solo integración), poné `—` en la otra columna. Para correr todo: `npm test` y `npm run test:integration`.
 

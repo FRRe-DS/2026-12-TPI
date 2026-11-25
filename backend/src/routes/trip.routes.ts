@@ -58,7 +58,7 @@ export async function handleContractRouter(
     }
 
     // Middleware de Autenticación JWT (M1)
-    const auth = authenticateMiddleware(req);
+    const auth = await authenticateMiddleware(req);
     applyRateLimit(auth, res);
 
     // 2. POST /trips
