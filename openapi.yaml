@@ -576,11 +576,16 @@ components:
       bearerFormat: JWT
       description: |
         Token JWT emitido por M1 (Identidad y Acceso / Keycloak). M6 valida la firma RS256 contra el JWKS
-        del emisor y los claims `iss` y `exp`. Los roles se leen del claim `roles`: los roles de usuario
+        del emisor y los claims `iss` y `exp`. El `iss` esperado se configura con `AUTH_ISSUER` (por
+        defecto, el realm de Keycloak del módulo: `http://localhost:8081/realms/ds-2026-realm`).
+        M6 **no exige `aud`** porque el realm actual no lo emite; se puede exigir con `AUTH_AUDIENCE`.
+        Solo acepta RS256 con las claves publicadas en el JWKS de ese emisor: **no se aceptan tokens
+        HS256 ni claves compartidas**. Si el emisor no responde, M6 responde `503 DEPENDENCY_UNAVAILABLE`.
+        Los roles se leen del claim `roles`: los roles de usuario
         (`CLIENTE`, `CONDUCTOR`, `OPERADOR`) y, para cuentas de servicio, el rol del módulo que llama
-        (`solicitud-be`, `viajes-be`, ...), que M6 trata como `SYSTEM`. En los tokens de servicio la
-        identidad es el cliente (`azp`), no el `sub`. También se aceptan `role` string y `realm_access.roles`
-        por compatibilidad (RF-1.4 / RNF-12).
+        (`solicitud-be`, `clientes-be`, `viajes-be`, ...), que M6 trata como `SYSTEM`. En los tokens de
+        servicio la identidad es el cliente (`azp`), no el `sub`. También se aceptan `role` string y
+        `realm_access.roles` por compatibilidad (RF-1.4 / RNF-12).
 
   parameters:
     TripId:

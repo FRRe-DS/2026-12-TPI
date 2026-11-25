@@ -197,6 +197,20 @@ La especificación detallada de los endpoints se encuentra definida bajo el est�
 * **Configuración:** `AUTH_ISSUER` (por defecto el realm compartido `http://localhost:8080/realms/ds-2026-realm`), `AUTH_JWKS_URI`, `AUTH_AUDIENCE` (opcional), `AUTH_JWKS_TIMEOUT_MS`, `AUTH_JWKS_CACHE_MS` y `AUTH_CLOCK_TOLERANCE_SEC`. Las claves se cachean y se refrescan si aparece un `kid` nuevo. El `docker-compose.yml` del módulo levanta su propio Keycloak en `http://localhost:8081` con un realm derivado del de la cátedra y ya setea estas variables; ver [`keycloak/README.md`](keycloak/README.md).
 * **Atajos de demostración:** el header `X-Actor-Role` / `X-Actor-Id` sin token, los tokens rápidos (`Bearer SYSTEM`, `Bearer DRIVER:<id>`) y los JWT del panel (`/api/demo-tokens`) **solo funcionan con `ENABLE_DEMO_AUTH=true`**, pensado para desarrollo. Sin esa variable (o con cualquier otro valor) se responden `401`, y `/api/demo-tokens` del panel responde `404`. En cualquier entorno publicado debe quedar en `false`.
 
+#### Qué espera M6 de un token (issue #9)
+
+| Pregunta | Respuesta |
+| :--- | :--- |
+| `iss` | El valor de `AUTH_ISSUER`. Por defecto, el Keycloak del módulo: `http://localhost:8081/realms/ds-2026-realm`. En un entorno compartido, el emisor del Keycloak acordado por el consorcio. |
+| `aud` | **No se exige.** El realm no emite `aud`; si se define `AUTH_AUDIENCE`, se valida. |
+| Clave | **RS256** con las claves del JWKS de ese emisor (`{issuer}/protocol/openid-connect/certs`). No se aceptan HS256 ni claves compartidas. |
+| Roles | Claim `roles` (o `role` / `realm_access.roles`). `CLIENTE` → `CLIENT`, `CONDUCTOR` → `DRIVER`, `OPERADOR` → `OPERATOR`, cualquier `*-be` o `SERVICIO` → `SYSTEM`. |
+| Identidad | Usuarios: `sub`. Cuentas de servicio: `azp` (por ejemplo, `grupo-17`). |
+
+Un módulo que hoy firme sus propios tokens (por ejemplo, M2 con su clave) recibe `401`. Para llamar a M6
+tiene que pedir un token de servicio al Keycloak acordado (`client_credentials` con su cliente
+`grupo-NN`) y enviarlo como `Bearer`.
+
 ### Health checks (RNF-14)
 `GET /health/details` verifica PostgreSQL con un timeout de 1,5 s y devuelve un `HealthReport`:
 
