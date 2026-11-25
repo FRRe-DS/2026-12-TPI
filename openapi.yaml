@@ -36,7 +36,7 @@ info:
 
     Los eventos asíncronos que publica M6 están definidos en este mismo archivo: el sobre
     `EventEnvelope` y los esquemas `TripCreatedEvent`, `DriverArrivedEvent`, `TripStartedEvent`,
-    `TripCompletedEvent` y `TripCancelledEvent`, con su payload campo por campo. Se nombran en
+    `TripCompletedEvent`, `TripCancelledEvent` y `TripRatedEvent`, con su payload campo por campo. Se nombran en
     pasado, llevan datos suficientes para que el consumidor no vuelva a preguntar y se deduplican
     por `eventId` (RNF-09).
 
@@ -48,7 +48,7 @@ info:
 
     - exchange `m6.events`, tipo `topic`, duradero;
     - routing key `trip.<evento>`: `trip.created`, `trip.arrived`, `trip.started`, `trip.completed`,
-      `trip.cancelled`;
+      `trip.cancelled`, `trip.rated`;
     - una cola por consumidor (`m7.trips`, `m8.trips`, ...), enlazada a las routing keys que le
       interesan; mensajes persistentes y deduplicados por `eventId`.
 
@@ -78,6 +78,8 @@ tags:
     description: Creación y consulta de viajes.
   - name: Lifecycle
     description: Transiciones de estado del viaje.
+  - name: Ratings
+    description: Calificaciones posteriores al viaje (cliente al conductor y conductor al cliente).
   - name: Health
     description: Health checks y diagnóstico (RNF-14).
 security:
@@ -515,6 +517,126 @@ paths:
         '429':
           $ref: '#/components/responses/TooManyRequests'
 
+  /trips/{tripId}/client-rating:
+    parameters:
+      - $ref: '#/components/parameters/TripId'
+      - $ref: '#/components/parameters/CorrelationId'
+    post:
+      tags: [Ratings]
+      operationId: rateDriver
+      summary: El cliente califica al conductor
+      description: |
+        RF-6.5. Cuando el viaje pasa a `COMPLETED` queda habilitada la calificación de los dos lados.
+        Este endpoint es el del cliente hacia el conductor; el conductor califica al cliente en
+        `POST /trips/{tripId}/driver-rating`.
+
+        Reglas:
+        - Sólo se puede calificar un viaje `COMPLETED`. En cualquier otro estado responde
+          `409 TRIP_NOT_COMPLETED`, con `currentState`.
+        - Cada lado califica una sola vez por viaje. Repetirlo responde `409 ALREADY_RATED`, también
+          ante pedidos simultáneos (RNF-08); un reintento después de un éxito recibe ese mismo `409`.
+        - `score` es un entero de 1 a 5. `comment` es opcional, de hasta 500 caracteres.
+        - La calificación no cambia el estado del viaje.
+        - Publica `TripRated` con `ratedBy: CLIENT`, para que el módulo del conductor calificado
+          reciba la nota.
+
+        **Roles permitidos:** el `CLIENT` del viaje. Cualquier otro usuario o rol recibe `403`.
+      x-allowed-roles: [CLIENT]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RateTripRequest'
+      responses:
+        '201':
+          description: Calificación registrada.
+          headers:
+            RateLimit-Limit:
+              $ref: '#/components/headers/RateLimitLimit'
+            RateLimit-Remaining:
+              $ref: '#/components/headers/RateLimitRemaining'
+            RateLimit-Reset:
+              $ref: '#/components/headers/RateLimitReset'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TripRating'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+
+  /trips/{tripId}/driver-rating:
+    parameters:
+      - $ref: '#/components/parameters/TripId'
+      - $ref: '#/components/parameters/CorrelationId'
+    post:
+      tags: [Ratings]
+      operationId: rateClient
+      summary: El conductor califica al cliente
+      description: |
+        RF-6.5. Cuando el viaje pasa a `COMPLETED` queda habilitada la calificación de los dos lados.
+        Este endpoint es el del conductor hacia el cliente; el cliente califica al conductor en
+        `POST /trips/{tripId}/client-rating`.
+
+        Reglas:
+        - Sólo se puede calificar un viaje `COMPLETED`. En cualquier otro estado responde
+          `409 TRIP_NOT_COMPLETED`, con `currentState`.
+        - Cada lado califica una sola vez por viaje. Repetirlo responde `409 ALREADY_RATED`, también
+          ante pedidos simultáneos (RNF-08); un reintento después de un éxito recibe ese mismo `409`.
+        - `score` es un entero de 1 a 5. `comment` es opcional, de hasta 500 caracteres.
+        - La calificación no cambia el estado del viaje.
+        - Publica `TripRated` con `ratedBy: DRIVER`, para que el módulo del cliente calificado
+          reciba la nota.
+
+        **Roles permitidos:** el `DRIVER` asignado al viaje. Cualquier otro usuario o rol recibe `403`.
+      x-allowed-roles: [DRIVER]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RateTripRequest'
+      responses:
+        '201':
+          description: Calificación registrada.
+          headers:
+            RateLimit-Limit:
+              $ref: '#/components/headers/RateLimitLimit'
+            RateLimit-Remaining:
+              $ref: '#/components/headers/RateLimitRemaining'
+            RateLimit-Reset:
+              $ref: '#/components/headers/RateLimitReset'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TripRating'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+
   /health:
     get:
       tags: [Health]
@@ -730,6 +852,8 @@ components:
         - `CONCURRENCY_CONFLICT`: otro pedido modificó el viaje al mismo tiempo.
         - `REQUEST_ID_CONFLICT`: el `requestId` ya tiene un viaje, pero con datos distintos a los del pedido.
         - `REQUEST_IN_PROGRESS`: otro pedido con la misma `Idempotency-Key` todavía se está procesando.
+        - `TRIP_NOT_COMPLETED`: se intentó calificar un viaje que todavía no está `COMPLETED`.
+        - `ALREADY_RATED`: ese lado (cliente o conductor) ya calificó este viaje.
       content:
         application/problem+json:
           schema:
@@ -1282,6 +1406,8 @@ components:
             - PRECONDITION_FAILED
             - INVALID_VERIFICATION_CODE
             - REASON_NOT_ALLOWED
+            - TRIP_NOT_COMPLETED
+            - ALREADY_RATED
             - IDEMPOTENCY_KEY_REUSED
             - TOO_MANY_REQUESTS
             - DEPENDENCY_UNAVAILABLE
@@ -1302,6 +1428,52 @@ components:
               message:
                 type: string
 
+    RatingAuthor:
+      type: string
+      description: Quién emite la calificación. `CLIENT` califica al conductor y `DRIVER` califica al cliente.
+      enum: [CLIENT, DRIVER]
+
+    RateTripRequest:
+      type: object
+      required: [score]
+      properties:
+        score:
+          type: integer
+          minimum: 1
+          maximum: 5
+          description: Puntaje entero de 1 a 5.
+          example: 4
+        comment:
+          type: [string, 'null']
+          maxLength: 500
+          description: Comentario opcional, de hasta 500 caracteres.
+          example: Viaje tranquilo y puntual.
+
+    TripRating:
+      type: object
+      required: [tripId, ratedBy, raterId, ratedId, score, comment, createdAt]
+      properties:
+        tripId:
+          $ref: '#/components/schemas/Id'
+        ratedBy:
+          $ref: '#/components/schemas/RatingAuthor'
+        raterId:
+          $ref: '#/components/schemas/Id'
+          description: Quién califica.
+        ratedId:
+          $ref: '#/components/schemas/Id'
+          description: Quién recibe la calificación.
+        score:
+          type: integer
+          minimum: 1
+          maximum: 5
+        comment:
+          type: [string, 'null']
+          maxLength: 500
+        createdAt:
+          type: string
+          format: date-time
+
     # ------------------------------------------------------------------
     # Catálogo de eventos asíncronos publicados por M6 (RNF-03 / RNF-10)
     # ------------------------------------------------------------------
@@ -1316,7 +1488,7 @@ components:
           description: Identificador único del evento. Los consumidores deduplican por este valor (RNF-09).
         eventType:
           type: string
-          enum: [TripCreated, DriverArrived, TripStarted, TripCompleted, TripCancelled]
+          enum: [TripCreated, DriverArrived, TripStarted, TripCompleted, TripCancelled, TripRated]
         eventVersion:
           type: integer
           minimum: 1
@@ -1428,6 +1600,26 @@ components:
           type: integer
           minimum: 0
 
+    TripRatedPayload:
+      type: object
+      required: [ratedBy, raterId, ratedId, score, comment]
+      properties:
+        ratedBy:
+          $ref: '#/components/schemas/RatingAuthor'
+        raterId:
+          $ref: '#/components/schemas/Id'
+          description: Quién calificó.
+        ratedId:
+          $ref: '#/components/schemas/Id'
+          description: Quién recibió la calificación (el destinatario del evento).
+        score:
+          type: integer
+          minimum: 1
+          maximum: 5
+        comment:
+          type: [string, 'null']
+          maxLength: 500
+
     TripCreatedEvent:
       allOf:
         - $ref: '#/components/schemas/EventEnvelope'
@@ -1487,3 +1679,15 @@ components:
               enum: [TripCancelled]
             payload:
               $ref: '#/components/schemas/TripCancelledPayload'
+            
+    TripRatedEvent:
+      allOf:
+        - $ref: '#/components/schemas/EventEnvelope'
+        - type: object
+          required: [payload]
+          properties:
+            eventType:
+              type: string
+              enum: [TripRated]
+            payload:
+              $ref: '#/components/schemas/TripRatedPayload'

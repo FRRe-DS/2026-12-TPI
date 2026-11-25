@@ -169,6 +169,8 @@ La especificación detallada de los endpoints se encuentra definida bajo el est�
 | `POST` | `/trips/{id}/start` | `DRIVER` asignado (valida con **M8**) | Valida QR de un solo uso e inicia viaje (`IN_PROGRESS` - RF-6.4). |
 | `POST` | `/trips/{id}/complete` | `DRIVER` asignado | Cierra el viaje con la distancia informada; M6 calcula la duración desde `startedAt` (`COMPLETED` - RF-6.5). |
 | `POST` | `/trips/{id}/cancel` | `CLIENT` / `DRIVER` / `OPERATOR` | Cancela el viaje con motivo obligatorio del catálogo (`CANCELLED` + `cancelledBy`), según la tabla de cancelación (RF-6.6 / RF-6.7). |
+| `POST` | `/trips/{id}/client-rating` | `CLIENT` del viaje | El cliente califica al conductor (`score` de 1 a 5, `comment` opcional). Solo sobre un viaje `COMPLETED` y una vez por lado; publica `TripRated` (RF-6.5). |
+| `POST` | `/trips/{id}/driver-rating` | `DRIVER` asignado | El conductor califica al cliente. Mismas reglas que `client-rating` (RF-6.5). |
 | `GET` | `/trips/{id}/history` | `CLIENT` y `DRIVER` del viaje, `OPERATOR` | Registro de auditoría de transiciones, en orden de `sequence` (RF-6.8). `SYSTEM` recibe `403`. |
 | `GET` | `/health` | Público | Liveness: el proceso está vivo. No consulta dependencias (lo usa el `HEALTHCHECK` de Docker). |
 | `GET` | `/health/details` | Público | Readiness y diagnóstico de dependencias (RNF-14). Ver más abajo. |
@@ -207,7 +209,7 @@ La especificación detallada de los endpoints se encuentra definida bajo el est�
 RabbitMQ y Redis todavía no forman parte del módulo, por lo que figuran como `NOT_CONFIGURED` y no degradan el estado. La bandeja de salida de eventos (`outbox`) es `null` hasta que exista. El detalle de los errores nunca expone credenciales ni cadenas de conexión; el mensaje real queda solo en el log del servidor.
 
 ### Salidas Asíncronas (Catálogo de Eventos de Dominio - RNF-03)
-*(En próximas iteraciones se publicarán mediante RabbitMQ según RNF-10. Hoy se publican en el bus en memoria de `event-publisher.service.ts`, que conserva los últimos 100 y los expone en el panel de demo. Convención propuesta en el contrato: exchange `m6.events` de tipo `topic` y routing keys `trip.created`, `trip.arrived`, `trip.started`, `trip.completed` y `trip.cancelled`.)*
+*(En próximas iteraciones se publicarán mediante RabbitMQ según RNF-10. Hoy se publican en el bus en memoria de `event-publisher.service.ts`, que conserva los últimos 100 y los expone en el panel de demo. Convención propuesta en el contrato: exchange `m6.events` de tipo `topic` y routing keys `trip.created`, `trip.arrived`, `trip.started`, `trip.completed`, `trip.cancelled` y `trip.rated`.)*
 
 Los eventos se nombran **en pasado** y describen algo que ya ocurrió. Llevan datos suficientes para que quien los reciba **no tenga que volver a preguntar** (RNF-03). Los esquemas completos están en `openapi.yaml` → `components/schemas`.
 
@@ -236,6 +238,7 @@ Dos reglas para los consumidores:
 | `TripStarted` | `POST /trips/{id}/start` | `TripStatusPayload` | M8 | Aviso de inicio del viaje (RF-8.1). |
 | `TripCompleted` | `POST /trips/{id}/complete` | `TripCompletedPayload` | M7, M8, M4, M2, M3 | Cobro y liquidación (RF-7.3 / RF-7.8); comprobante PDF (RF-8.4); liberar conductor (RF-4.4); habilitar calificaciones (RF-2.5 / RF-3.7). |
 | `TripCancelled` | `POST /trips/{id}/cancel` (cualquier rol) | `TripCancelledPayload` | M7, M8, M4, M5 | Cargo de cancelación (RF-7.4); aviso a la otra parte; liberar conductor; M5 re-despacha solo si `requiresRedispatch` es `true`. |
+| `TripRated` | `POST /trips/{id}/client-rating` o `POST /trips/{id}/driver-rating` | `TripRatedPayload` | M3, M2 | Hacerle llegar la nota a quien la recibió: al conductor (la pone el cliente) o al cliente (la pone el conductor). |
 
 Hay **un único evento de cancelación**. Quién canceló (`cancelledBy`), el motivo (`reason`) y si hay que re-despachar (`requiresRedispatch`) viajan en el payload, así cada consumidor decide sin necesitar eventos distintos por rol.
 
@@ -289,6 +292,16 @@ Hay **un único evento de cancelación**. Quién canceló (`cancelledBy`), el mo
 | `previousState` | `TripState` | Estado desde el que se canceló (`PENDING_ARRIVAL`, `DRIVER_ARRIVED` o `IN_PROGRESS`). |
 | `requiresRedispatch` | boolean | Si M5 debe buscar otro conductor para la solicitud. |
 | `secondsSinceCreation` | integer | Antigüedad del viaje al cancelarse; insumo del cargo de cancelación (RF-7.4). |
+
+**`TripRatedPayload`** — en `TripRated`
+
+| Campo | Tipo | Para qué |
+| :--- | :--- | :--- |
+| `ratedBy` | `CLIENT` \| `DRIVER` | Quién calificó: `CLIENT` califica al conductor y `DRIVER` califica al cliente (RF-6.5). |
+| `raterId` | uuid | Quién calificó. |
+| `ratedId` | uuid | Quién recibió la calificación; el módulo de esa persona la guarda. |
+| `score` | integer | Puntaje de 1 a 5. |
+| `comment` | string \| null | Comentario opcional, de hasta 500 caracteres. |
 
 ### Dependencias Síncronas Salientes
 * **M8:** validación del token / QR de un solo uso en `POST /trips/{id}/start` delegada en `M8QrValidatorService` mediante `POST /api/v1/documents/qr/verify` (o simulación en memoria si `M8_API_URL` no está definida). Soporta token de servicio configurable (`M8_SERVICE_TOKEN`), timeout (`M8_TIMEOUT_MS`) y reintentos limitados ante fallas de red o `5xx` (RNF-13). Los rechazos de negocio de M8 (`400`, `404`, `410`) se traducen a `422 INVALID_VERIFICATION_CODE` sin reintentar; en cambio, cualquier falla `5xx`, timeout o error de autenticación inter-servicio (`401`/`403`, registrado en log) responde `503 DEPENDENCY_UNAVAILABLE` con cabecera `Retry-After: 5` sin alterar el estado del viaje ni mostrar falsamente al conductor que el QR es inválido.
