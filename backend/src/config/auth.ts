@@ -18,9 +18,11 @@ export interface AuthConfig {
   cacheTtlMs: number;
   /** Tolerancia de reloj al comparar `exp`, `nbf` e `iat`, en segundos. */
   clockToleranceSec: number;
+  /** Tras un fallo al bajar el JWKS, cuánto se espera antes de volver a intentarlo. */
+  refreshCooldownMs: number;
 }
 
-/** Realm compartido de la cátedra; coincide con `keycloak/docker-compose.yml`. */
+/** Realm de la cátedra (FRRe-DS/2026-TPI, carpeta `keycloak/`). El compose del módulo usa 8081. */
 export const DEFAULT_AUTH_ISSUER = "http://localhost:8080/realms/ds-2026-realm";
 
 function positiveNumber(raw: string | undefined, fallback: number): number {
@@ -39,5 +41,6 @@ export function loadAuthConfig(env: NodeJS.ProcessEnv = process.env): AuthConfig
     timeoutMs: positiveNumber(env.AUTH_JWKS_TIMEOUT_MS, 3000),
     cacheTtlMs: positiveNumber(env.AUTH_JWKS_CACHE_MS, 10 * 60 * 1000),
     clockToleranceSec: positiveNumber(env.AUTH_CLOCK_TOLERANCE_SEC, 5),
+    refreshCooldownMs: positiveNumber(env.AUTH_JWKS_COOLDOWN_MS, 5000),
   };
 }

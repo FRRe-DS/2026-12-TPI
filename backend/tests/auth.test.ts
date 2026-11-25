@@ -22,6 +22,7 @@ const config: AuthConfig = {
   timeoutMs: 1000,
   cacheTtlMs: 60_000,
   clockToleranceSec: 0,
+  refreshCooldownMs: 5000,
 };
 
 function buildVerifier(jwks: unknown = keyPair.jwks, status = 200): JwtVerifier {
@@ -87,6 +88,21 @@ describe("Autenticación: atajos de demo", () => {
     await expect(
       authenticateMiddleware(req({ authorization: `Bearer ${demoJwt}` }), buildVerifier())
     ).resolves.toEqual({ sub: DRIVER_ID, role: "DRIVER" });
+  });
+
+  it("con la demo activada, un JWT del panel vencido sigue siendo 401", async () => {
+    process.env.ENABLE_DEMO_AUTH = "true";
+    const b64 = (obj: unknown) => Buffer.from(JSON.stringify(obj)).toString("base64url");
+    const demoSignature = Buffer.from("m6-demo-signature").toString("base64url");
+    const expired = `${b64({ alg: "HS256", typ: "JWT" })}.${b64({
+      sub: DRIVER_ID,
+      roles: ["DRIVER"],
+      exp: nowSec() - 10,
+    })}.${demoSignature}`;
+
+    await expect(
+      authenticateMiddleware(req({ authorization: `Bearer ${expired}` }), buildVerifier())
+    ).rejects.toMatchObject({ statusCode: 401, code: "UNAUTHENTICATED" });
   });
 });
 
@@ -185,5 +201,15 @@ describe("Traducción de roles de Keycloak", () => {
     expect(
       mapClaimsToActor({ sub: "x", roles: [rawRole], exp: nowSec() + 60 })
     ).toMatchObject({ role: expected });
+  });
+
+  it("prioriza el rol de usuario sobre el de servicio, sin importar el orden", () => {
+    expect(
+      mapClaimsToActor({ sub: "x", roles: ["SERVICIO", "CONDUCTOR"], exp: nowSec() + 60 })
+    ).toMatchObject({ role: "DRIVER" });
+
+    expect(
+      mapClaimsToActor({ sub: "x", roles: ["CONDUCTOR", "SERVICIO"], exp: nowSec() + 60 })
+    ).toMatchObject({ role: "DRIVER" });
   });
 });

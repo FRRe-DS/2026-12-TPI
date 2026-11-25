@@ -18,17 +18,23 @@ export interface AuthContext {
  * Roles que puede traer el token. Los `CLIENTE`/`CONDUCTOR`/`OPERADOR` son los
  * acordados con M1; los ingleses se aceptan por compatibilidad con tokens viejos.
  */
-const DIRECT_ROLE_ALIASES: Record<string, ActorRole> = {
+/** Roles de usuario: si el token los trae, tienen prioridad sobre los de servicio. */
+const USER_ROLE_ALIASES: Record<string, ActorRole> = {
   CLIENT: "CLIENT",
   CLIENTE: "CLIENT",
   DRIVER: "DRIVER",
   CONDUCTOR: "DRIVER",
   OPERATOR: "OPERATOR",
   OPERADOR: "OPERATOR",
-  SYSTEM: "SYSTEM",
-  SERVICIO: "SYSTEM",
-  SERVICE: "SYSTEM",
 };
+
+/** Alias de cuenta de servicio (llamadas entre módulos). */
+const SERVICE_ROLE_ALIASES = new Set(["SYSTEM", "SERVICIO", "SERVICE"]);
+
+function aliasToRole(rawRole: string): ActorRole | undefined {
+  const key = rawRole.toUpperCase();
+  return USER_ROLE_ALIASES[key] ?? (SERVICE_ROLE_ALIASES.has(key) ? "SYSTEM" : undefined);
+}
 
 /** Firma que usa el panel de demo; solo se acepta con `ENABLE_DEMO_AUTH=true`. */
 const DEMO_SIGNATURE = Buffer.from("m6-demo-signature").toString("base64url");
@@ -99,14 +105,27 @@ export function mapClaimsToActor(claims: JwtClaims): AuthContext {
   const rawRoles = collectRawRoles(claims);
 
   let role: ActorRole | null = null;
+
+  // 1) Rol de usuario: tiene prioridad sobre el de servicio.
   for (const raw of rawRoles) {
-    const mapped = DIRECT_ROLE_ALIASES[raw.toUpperCase()];
+    const mapped = USER_ROLE_ALIASES[raw.toUpperCase()];
     if (mapped) {
       role = mapped;
       break;
     }
   }
 
+  // 2) Alias explícito de servicio (SERVICIO / SYSTEM / SERVICE).
+  if (!role) {
+    for (const raw of rawRoles) {
+      if (SERVICE_ROLE_ALIASES.has(raw.toUpperCase())) {
+        role = "SYSTEM";
+        break;
+      }
+    }
+  }
+
+  // 3) Rol de módulo emitido por Keycloak (`solicitud-be`, `viajes-be`, ...).
   if (!role) {
     for (const raw of rawRoles) {
       if (raw.toLowerCase().endsWith("-be")) {
@@ -164,7 +183,7 @@ export async function authenticateMiddleware(
 
   // Atajo de demo 1: rol por header, sin token.
   if (demo && !authHeader && fallbackRole) {
-    const mapped = DIRECT_ROLE_ALIASES[fallbackRole.toUpperCase()];
+    const mapped = aliasToRole(fallbackRole);
     if (mapped) {
       return {
         sub: fallbackSub || "00000000-0000-4000-8000-000000000000",
@@ -188,7 +207,7 @@ export async function authenticateMiddleware(
 
   // Atajos de demo 2: tokens rápidos ("SYSTEM", "SERVICIO", "DRIVER:<uuid>", etc.).
   if (demo) {
-    const directRole = DIRECT_ROLE_ALIASES[token.toUpperCase()];
+    const directRole = aliasToRole(token);
     if (directRole) {
       return {
         sub: fallbackSub || "00000000-0000-4000-8000-000000000000",
@@ -197,7 +216,7 @@ export async function authenticateMiddleware(
     }
     if (token.includes(":")) {
       const [r, id] = token.split(":");
-      const mapped = r ? DIRECT_ROLE_ALIASES[r.toUpperCase()] : undefined;
+      const mapped = r ? aliasToRole(r) : undefined;
       if (mapped && id) {
         return { sub: id.trim(), role: mapped };
       }
@@ -207,12 +226,23 @@ export async function authenticateMiddleware(
   // Atajo de demo 3: JWT del panel (firma simbólica), solo en desarrollo.
   if (demo && isDemoJwt(token)) {
     const [, payloadSegment] = token.split(".");
+    let claims: JwtClaims;
     try {
-      const claims = JSON.parse(Buffer.from(payloadSegment!, "base64url").toString("utf-8")) as JwtClaims;
-      return mapClaimsToActor(claims);
+      claims = JSON.parse(Buffer.from(payloadSegment!, "base64url").toString("utf-8")) as JwtClaims;
     } catch {
       throw new ApiError(401, "UNAUTHENTICATED", "No se pudo leer el token de demostración.");
     }
+
+    const nowSec = Math.floor(Date.now() / 1000);
+    if (typeof claims.exp !== "number" || !Number.isFinite(claims.exp) || claims.exp < nowSec) {
+      throw new ApiError(
+        401,
+        "UNAUTHENTICATED",
+        "El token de demostración no tiene vencimiento válido o está vencido."
+      );
+    }
+
+    return mapClaimsToActor(claims);
   }
 
   try {

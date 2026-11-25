@@ -54,8 +54,9 @@ curl.exe -s http://localhost:8081/realms/ds-2026-realm/protocol/openid-connect/t
   -d password=conductor1-contrasena-de-desarrollo
 ```
 
-El token trae `roles: ["CONDUCTOR", "default-roles-ds-2026-realm"]` y el `sub` es el ID
-fijo del usuario. Para un token de servicio se usa `client_credentials` con el cliente
+El token trae el rol en `roles` (Keycloak lo repite una vez por cada client scope, así que el claim
+queda por ejemplo `["CONDUCTOR","CONDUCTOR","CONDUCTOR","CONDUCTOR"]`; es cosmético) y el `sub` es
+el ID fijo del usuario. Para un token de servicio se usa `client_credentials` con el cliente
 `grupo-12` y su secreto (está en `realm-config/ds-2026-realm.json`) o con el cliente de
 otro módulo que llame a M6.
 

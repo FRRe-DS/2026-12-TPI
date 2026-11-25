@@ -194,14 +194,14 @@ La especificación detallada de los endpoints se encuentra definida bajo el est�
 ### Seguridad (RNF-12)
 * **Autenticación:** JWT de M1 (Keycloak) en `Authorization: Bearer <token>`. Se valida la **firma RS256** contra el JWKS de M1 y además `iss`, `exp`, `nbf`, `iat` y, si se configura, `aud`. Un token inválido o vencido responde `401 UNAUTHENTICATED`; si M1 no responde se responde `503 DEPENDENCY_UNAVAILABLE` con `Retry-After` (RNF-13), para no hacerle creer al cliente que su token es inválido.
 * **Roles:** Keycloak emite un rol por módulo (`solicitud-be`, `viajes-be`, ...) en el claim `roles`; cualquiera de ellos se traduce a `SYSTEM`. Si el token también trae un rol de usuario (`CLIENTE`, `CONDUCTOR`, `OPERADOR`), ese tiene prioridad. En los tokens de servicio la identidad (`actorId`) es el cliente (`azp`, por ejemplo `grupo-05`), no el `sub`.
-* **Configuración:** `AUTH_ISSUER` (por defecto el realm compartido `http://localhost:8080/realms/ds-2026-realm`), `AUTH_JWKS_URI`, `AUTH_AUDIENCE` (opcional), `AUTH_JWKS_TIMEOUT_MS`, `AUTH_JWKS_CACHE_MS` y `AUTH_CLOCK_TOLERANCE_SEC`. Las claves se cachean y se refrescan si aparece un `kid` nuevo. El `docker-compose.yml` del módulo levanta su propio Keycloak en `http://localhost:8081` con un realm derivado del de la cátedra y ya setea estas variables; ver [`keycloak/README.md`](keycloak/README.md).
+* **Configuración:** `AUTH_ISSUER` (por defecto el realm compartido `http://localhost:8080/realms/ds-2026-realm`), `AUTH_JWKS_URI`, `AUTH_AUDIENCE` (opcional), `AUTH_JWKS_TIMEOUT_MS`, `AUTH_JWKS_CACHE_MS` y `AUTH_CLOCK_TOLERANCE_SEC`. Las claves se cachean y se refrescan si aparece un `kid` nuevo. El `docker-compose.yml` del módulo levanta su propio Keycloak en `http://localhost:8081` con un realm derivado del de la cátedra y ya setea estas variables; ver [`keycloak/README.md`](keycloak/README.md). Si el JWKS no responde, se siguen usando las claves cacheadas (RNF-13): una clave revocada se sigue aceptando hasta el próximo refresco exitoso.
 * **Atajos de demostración:** el header `X-Actor-Role` / `X-Actor-Id` sin token, los tokens rápidos (`Bearer SYSTEM`, `Bearer DRIVER:<id>`) y los JWT del panel (`/api/demo-tokens`) **solo funcionan con `ENABLE_DEMO_AUTH=true`**, pensado para desarrollo. Sin esa variable (o con cualquier otro valor) se responden `401`, y `/api/demo-tokens` del panel responde `404`. En cualquier entorno publicado debe quedar en `false`.
 
 #### Qué espera M6 de un token (issue #9)
 
 | Pregunta | Respuesta |
 | :--- | :--- |
-| `iss` | El valor de `AUTH_ISSUER`. Por defecto, el Keycloak del módulo: `http://localhost:8081/realms/ds-2026-realm`. En un entorno compartido, el emisor del Keycloak acordado por el consorcio. |
+| `iss` | El valor de `AUTH_ISSUER`. Por defecto, el realm de la cátedra: `http://localhost:8080/realms/ds-2026-realm`. El `docker-compose.yml` del módulo lo setea en `http://localhost:8081/realms/ds-2026-realm`; en un entorno compartido, el emisor acordado por el consorcio. |
 | `aud` | **No se exige.** El realm no emite `aud`; si se define `AUTH_AUDIENCE`, se valida. |
 | Clave | **RS256** con las claves del JWKS de ese emisor (`{issuer}/protocol/openid-connect/certs`). No se aceptan HS256 ni claves compartidas. |
 | Roles | Claim `roles` (o `role` / `realm_access.roles`). `CLIENTE` → `CLIENT`, `CONDUCTOR` → `DRIVER`, `OPERADOR` → `OPERATOR`, cualquier `*-be` o `SERVICIO` → `SYSTEM`. |
@@ -337,7 +337,6 @@ Hay **un único evento de cancelación**. Quién canceló (`cancelledBy`), el mo
 | :--- | :--- | :--- |
 | Roles de usuario en el realm de la cátedra | El realm solo define roles de módulo (`*-be`); no existen `CLIENTE`, `CONDUCTOR` ni `OPERADOR`, y no hay usuarios con esos roles | Sin eso no se puede probar un inicio de viaje con cliente y conductor reales; depende de M1 / la cátedra (RF-1.3 / RNF-12) |
 | Permisos por módulo | Cualquier rol `*-be` se trata como `SYSTEM`; falta restringir por operación (por ejemplo, solo `solicitud-be` de M5 crea viajes) | Endurecer la autorización por operación (RF-1.4) |
-| `503` por M1 no declarado en el contrato | La validación devuelve `503 DEPENDENCY_UNAVAILABLE` si el JWKS no responde, pero solo `/trips/{tripId}/start` declara ese código en `openapi.yaml` | Agregarlo al resto de las operaciones y avisar al G5 (RNF-03) |
 | Realm no compartido con la cátedra | El `docker-compose.yml` levanta un Keycloak propio en `localhost:8081` con un realm derivado (roles y usuarios de desarrollo), porque el de la cátedra no tiene roles de usuario | Si la cátedra o M1 publican esos roles en el realm compartido, migrar y apuntar `AUTH_ISSUER` / `AUTH_JWKS_URI` a esa instancia (RNF-04 / RNF-18) |
 | Validación del QR contra M8 | `M8QrValidatorService` implementa la llamada HTTP oficial a M8 (`POST /api/v1/documents/qr/verify`) con quemado atómico garantizado por M8 (Redis con TTL y 410 Gone). En modo local/desarrollo sin M8, la simulación usa un cache en memoria | En modo local sin M8, los tokens consumidos en memoria se pierden al reiniciar; en producción, M8 es la fuente de verdad. Queda a coordinar con M8 (Grupo 10) si `/documents/qr/verify` es idempotente ante reintentos por timeout para el mismo `(tripId, token)` (RF-6.4 / RNF-09 / RNF-13) |
 | Bus de eventos | En memoria (`event-publisher.service.ts`), guarda los últimos 100 | Se pierde al reiniciar el servidor; queda para la iteración con RabbitMQ (RNF-10) |
@@ -463,6 +462,7 @@ Si después se quiere correr el backend localmente con `npm run dev` (Opción B)
    | `AUTH_AUDIENCE` | vacío | Audiencia esperada; el realm actual no emite `aud`, así que se deja vacía. |
    | `AUTH_JWKS_TIMEOUT_MS` | `3000` | Timeout para bajar el JWKS (RNF-13). |
    | `AUTH_JWKS_CACHE_MS` | `600000` | Cuánto se conservan las claves en memoria. |
+   | `AUTH_JWKS_COOLDOWN_MS` | `5000` | Tras un fallo al bajar el JWKS, cuánto se espera antes de reintentar (evita pagar el timeout en cada pedido). |
    | `AUTH_CLOCK_TOLERANCE_SEC` | `5` | Tolerancia de reloj al validar `exp` / `nbf` / `iat`. |
    | `APP_VERSION` | versión de `package.json` | Versión que informa `/health/details`. |
 

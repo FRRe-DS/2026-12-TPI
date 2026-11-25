@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import {
   InvalidTokenError,
   JwksUnavailableError,
@@ -16,6 +16,7 @@ const config: AuthConfig = {
   timeoutMs: 1000,
   cacheTtlMs: 60_000,
   clockToleranceSec: 0,
+  refreshCooldownMs: 5000,
 };
 
 const keyPair = createTestKeyPair();
@@ -143,4 +144,107 @@ describe("JwtVerifier", () => {
 
     await expect(verifier.verify("no-es-un-jwt")).rejects.toBeInstanceOf(InvalidTokenError);
   });
+
+  it("si el JWKS no se puede refrescar, sigue usando las claves cacheadas (RNF-13)", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    let calls = 0;
+    const fetchImpl = async () => {
+      calls += 1;
+      if (calls === 1) {
+        return new Response(JSON.stringify(keyPair.jwks), { status: 200 });
+      }
+      throw new Error("ECONNREFUSED");
+    };
+    const verifier = new JwtVerifier({ ...config, cacheTtlMs: 1 }, fetchImpl);
+
+    await expect(verifier.verify(token())).resolves.toMatchObject({ sub: "u-1" });
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    await expect(verifier.verify(token())).resolves.toMatchObject({ sub: "u-1" });
+
+    expect(calls).toBe(2);
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it("si el kid no está en la caché y el refresco falla, informa JWKS no disponible", async () => {
+    const rotated = createTestKeyPair("rotated-key");
+    let calls = 0;
+    const fetchImpl = async () => {
+      calls += 1;
+      if (calls === 1) {
+        return new Response(JSON.stringify(keyPair.jwks), { status: 200 });
+      }
+      throw new Error("ECONNREFUSED");
+    };
+    const verifier = new JwtVerifier({ ...config, cacheTtlMs: 1 }, fetchImpl, 0);
+
+    await verifier.verify(token());
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    const rotatedToken = signJwt(claims(), rotated.privateKey, rotated.kid);
+
+    await expect(verifier.verify(rotatedToken)).rejects.toBeInstanceOf(JwksUnavailableError);
+  });
+
+  it("un kid desconocido durante el cooldown es 503, no 401", async () => {
+    const stopped = createTestKeyPair("stopped-key");
+    let calls = 0;
+    const fetchImpl = async () => {
+      calls += 1;
+      if (calls === 1) {
+        return new Response(JSON.stringify(keyPair.jwks), { status: 200 });
+      }
+      throw new Error("ECONNREFUSED");
+    };
+    const verifier = new JwtVerifier(
+      { ...config, cacheTtlMs: 60_000, refreshCooldownMs: 60_000 },
+      fetchImpl,
+      0
+    );
+
+    // Cachea la clave original (la caché queda vigente).
+    await verifier.verify(token());
+    const stoppedToken = signJwt(claims(), stopped.privateKey, stopped.kid);
+
+    // Primero intenta refrescar y falla: el problema es la dependencia, no el token.
+    await expect(verifier.verify(stoppedToken)).rejects.toBeInstanceOf(JwksUnavailableError);
+
+    // Dentro del cooldown no se reintenta la descarga y sigue siendo 503.
+    await expect(verifier.verify(stoppedToken)).rejects.toBeInstanceOf(JwksUnavailableError);
+
+    expect(calls).toBe(2);
+  });
+
+  it("después de un fallo de refresco no reintenta en cada pedido (cooldown)", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    let calls = 0;
+    const fetchImpl = async () => {
+      calls += 1;
+      if (calls === 1) {
+        return new Response(JSON.stringify(keyPair.jwks), { status: 200 });
+      }
+      // Simula un Keycloak colgado: el pedido no responde y vence el timeout.
+      throw new Error("timeout");
+    };
+    const verifier = new JwtVerifier(
+      { ...config, cacheTtlMs: 1, refreshCooldownMs: 60_000 },
+      fetchImpl
+    );
+
+    await expect(verifier.verify(token())).resolves.toMatchObject({ sub: "u-1" });
+    await new Promise((resolve) => setTimeout(resolve, 5));
+
+    // Primer pedido con la caché vencida: intenta refrescar, falla y usa las viejas.
+    await expect(verifier.verify(token())).resolves.toMatchObject({ sub: "u-1" });
+    await new Promise((resolve) => setTimeout(resolve, 5));
+
+    // Siguiente pedido dentro del cooldown: no vuelve a intentar la descarga.
+    await expect(verifier.verify(token())).resolves.toMatchObject({ sub: "u-1" });
+
+    expect(calls).toBe(2);
+    warn.mockRestore();
+  });
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
 });

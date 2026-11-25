@@ -62,6 +62,7 @@ export class JwtVerifier {
   private keys = new Map<string, crypto.KeyObject>();
   private fetchedAt = 0;
   private inFlight: Promise<void> | null = null;
+  private lastRefreshFailureAt = 0;
 
   constructor(
     private readonly config: AuthConfig,
@@ -110,13 +111,43 @@ export class JwtVerifier {
 
   private async getKey(kid: string): Promise<crypto.KeyObject> {
     if (!this.isCacheFresh()) {
-      await this.refresh();
+      // Tras un fallo reciente no se reintenta en cada pedido: un Keycloak colgado
+      // haría esperar el timeout completo a todas las peticiones (RNF-13).
+      const inCooldown =
+        Date.now() - this.lastRefreshFailureAt < this.config.refreshCooldownMs;
+      if (inCooldown) {
+        const stale = this.keys.get(kid);
+        if (stale) return stale;
+        throw new JwksUnavailableError(
+          "El JWKS de M1 no está disponible; hay un reintento en curso."
+        );
+      }
+
+      try {
+        await this.refresh();
+      } catch (err) {
+        // Si el emisor no responde pero ya tenemos claves, se sigue atendiendo con las
+        // cacheadas (RNF-13). Se pierde la detección temprana de una clave revocada: la
+        // clave retirada se sigue aceptando hasta que un refresco funcione o se reinicie
+        // el proceso. Si el `kid` no está en la caché, no hay forma de verificar: 503.
+        const stale = this.keys.get(kid);
+        if (!stale) throw err;
+        console.warn(
+          "[JwtVerifier] No se pudo refrescar el JWKS; se usan las claves cacheadas (RNF-13)."
+        );
+        return stale;
+      }
     }
 
     const cached = this.keys.get(kid);
     if (cached) return cached;
 
-    // `kid` desconocido: puede ser una rotación de claves de M1. Se reintenta una vez.
+    // `kid` desconocido: puede ser una rotación de claves. Si acabamos de fallar al bajar
+    // el JWKS, no se puede verificar: es 503, no un token inválido (401). Si el cooldown
+    // ya pasó, se reintenta la descarga una vez.
+    if (Date.now() - this.lastRefreshFailureAt < this.config.refreshCooldownMs) {
+      throw new JwksUnavailableError("El JWKS de M1 no está disponible.");
+    }
     if (Date.now() - this.fetchedAt >= this.minForcedRefreshMs) {
       await this.refresh();
       const rotated = this.keys.get(kid);
@@ -129,9 +160,17 @@ export class JwtVerifier {
   private async refresh(): Promise<void> {
     // Varias peticiones concurrentes comparten una sola descarga del JWKS.
     if (!this.inFlight) {
-      this.inFlight = this.downloadKeys().finally(() => {
-        this.inFlight = null;
-      });
+      this.inFlight = this.downloadKeys()
+        .then(() => {
+          this.lastRefreshFailureAt = 0;
+        })
+        .catch((err: unknown) => {
+          this.lastRefreshFailureAt = Date.now();
+          throw err;
+        })
+        .finally(() => {
+          this.inFlight = null;
+        });
     }
     await this.inFlight;
   }
