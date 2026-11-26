@@ -249,7 +249,7 @@ Dos reglas para los consumidores:
 | `TripCreated` | `POST /trips` | `TripCreatedPayload` | M8, M4 | M8 genera el QR de un solo uso (RF-8.3); M4 mantiene al conductor reservado (RF-4.4). |
 | `DriverArrived` | `POST /trips/{id}/arrived` | `TripStatusPayload` | M8 | Aviso al cliente de que el conductor llegó (RF-8.1). |
 | `TripStarted` | `POST /trips/{id}/start` | `TripStatusPayload` | M8 | Aviso de inicio del viaje (RF-8.1). |
-| `TripCompleted` | `POST /trips/{id}/complete` | `TripCompletedPayload` | M7, M8, M4, M2, M3 | Cobro y liquidación (RF-7.3 / RF-7.8); comprobante PDF (RF-8.4); liberar conductor (RF-4.4); habilitar calificaciones (RF-2.5 / RF-3.7). |
+| `TripCompleted` | `POST /trips/{id}/complete` | `TripCompletedPayload` | M7, M8, M4, M2, M3 | Cobro y liquidación (RF-7.3 / RF-7.8); comprobante PDF (RF-8.4); liberar conductor (RF-4.4); aviso de fin de viaje a M2 y M3. |
 | `TripCancelled` | `POST /trips/{id}/cancel` (cualquier rol) | `TripCancelledPayload` | M7, M8, M4, M5 | Cargo de cancelación (RF-7.4); aviso a la otra parte; liberar conductor; M5 re-despacha solo si `requiresRedispatch` es `true`. |
 
 Hay **un único evento de cancelación**. Quién canceló (`cancelledBy`), el motivo (`reason`) y si hay que re-despachar (`requiresRedispatch`) viajan en el payload, así cada consumidor decide sin necesitar eventos distintos por rol.
