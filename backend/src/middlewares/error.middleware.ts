@@ -93,7 +93,11 @@ export function sendJsonResponse(
   if (extraHeaders) {
     Object.assign(headers, extraHeaders);
   }
-  res.writeHead(status, headers);
+  // setHeader guarda las cabeceras en la respuesta: res.getHeader las devuelve en el log (telemetria).
+  for (const [name, value] of Object.entries(headers)) {
+    res.setHeader(name, value);
+  }
+  res.writeHead(status);
   res.end(JSON.stringify(payload));
 }
 

@@ -221,6 +221,16 @@ tiene que pedir un token de servicio al Keycloak acordado (`client_credentials` 
 
 RabbitMQ y Redis todavía no forman parte del módulo, por lo que figuran como `NOT_CONFIGURED` y no degradan el estado. La bandeja de salida de eventos (`outbox`) es `null` hasta que exista. El detalle de los errores nunca expone credenciales ni cadenas de conexión; el mensaje real queda solo en el log del servidor.
 
+### Telemetría para OpsBoard
+
+Al configurar `OTEL_EXPORTER_OTLP_ENDPOINT`, el backend exporta métricas, trazas y logs por OTLP/HTTP. Sin esa variable, el servicio sigue funcionando sin exportadores. El nombre de servicio predeterminado es `m6-grupo12` y el atributo de recurso `grupo=12`; se pueden configurar con `OTEL_SERVICE_NAME` y `OTEL_RESOURCE_ATTRIBUTES`. Para correr el backend en el host junto al collector de OpsBoard, usar `OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318` en `backend/.env`. En Docker Compose, usar `http://host.docker.internal:4318` en el `.env` de la raíz.
+
+El contrato de métricas coincide con el [dashboard de OpsBoard](https://github.com/universoparalelo/opsboard-tpi-devops/blob/main/docs/convencion-metricas.md): `m6_trip_transitions` cuenta cambios de estado confirmados (`from`, `to`, `actor`), `m6_trip_cancellations` cuenta cancelaciones confirmadas (`actor`, `reason`) y `m6_transition_duration` mide segundos por operación (`action`, `resultado`). Una repetición idempotente no suma otra transición. La etiqueta `actor` contiene el rol. No se usan IDs de viajes o personas como etiquetas de métricas.
+
+El colector local de OpsBoard recibe los logs por OTLP. Si el entorno también captura `stdout`, elegir una sola de las dos fuentes para evitar duplicarlos.
+
+Las peticiones HTTP y las consultas Prisma aparecen como spans; el span `prisma:engine:db_query` alimenta además `db_client_operation_duration_seconds`, la serie consultada por el panel de latencia PostgreSQL p95. Los logs HTTP son JSON e incluyen `trace_id`, `span_id` y `idCorrelacion` cuando están disponibles. El log registra ruta normalizada, método y estado; no incluye cuerpos, tokens, coordenadas ni SQL. Las trazas HTTP entrantes exportan la ruta normalizada y omiten los parámetros de consulta. Los indicadores de CPU, memoria, runtime y HTTP se exportan con las instrumentaciones de OpenTelemetry.
+
 ### Salidas Asíncronas (Catálogo de Eventos de Dominio - RNF-03)
 *(En próximas iteraciones se publicarán mediante RabbitMQ según RNF-10. Hoy se publican en el bus en memoria de `event-publisher.service.ts`, que conserva los últimos 100 y los expone en el panel de demo. Convención propuesta en el contrato: exchange `m6.events` de tipo `topic` y routing keys `trip.created`, `trip.arrived`, `trip.started`, `trip.completed` y `trip.cancelled`.)*
 
