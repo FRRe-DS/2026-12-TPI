@@ -1,0 +1,755 @@
+{
+  "realm": "ds-2026-realm",
+  "enabled": true,
+  "defaultDefaultClientScopes": [
+    "clientes:read",
+    "clientes:write",
+    "conductores:read",
+    "conductores:write"
+  ],
+  "roles": {
+    "realm": [
+      {
+        "name": "clientes-be",
+        "description": "Rol para backend de M2: Clientes"
+      },
+      {
+        "name": "conductores-be",
+        "description": "Rol para backend de M3: Conductores y Vehículos"
+      },
+      {
+        "name": "ubicacion-be",
+        "description": "Rol para backend de M4: Ubicación y Disponibilidad"
+      },
+      {
+        "name": "solicitud-be",
+        "description": "Rol para backend de M5: Solicitud y Despacho"
+      },
+      {
+        "name": "viajes-be",
+        "description": "Rol para backend de M6: Viajes y Ciclo de Vida"
+      },
+      {
+        "name": "tarifas-be",
+        "description": "Rol para backend de M7: Tarifas, Pagos y Liquidaciones"
+      },
+      {
+        "name": "notificaciones-be",
+        "description": "Rol para backend de M8: Notificaciones, Documentos y Soporte"
+      },
+      {
+        "name": "reservas-be",
+        "description": "Rol para backend de M9: Reservas de Viajes"
+      },
+      {
+        "name": "CLIENTE",
+        "description": "Cliente de la plataforma (rol de usuario, RF-1.3)"
+      },
+      {
+        "name": "CONDUCTOR",
+        "description": "Conductor habilitado (rol de usuario, RF-1.3)"
+      },
+      {
+        "name": "OPERADOR",
+        "description": "Operador o administrador (rol de usuario, RF-1.3)"
+      },
+      {
+        "name": "SERVICIO",
+        "description": "Cuenta tecnica de un modulo (comunicacion entre modulos, RF-1.4)"
+      }
+    ]
+  },
+  "clientScopes": [
+    {
+      "name": "clientes:read",
+      "description": "Scope que permite acceso de lectura a los clientes",
+      "protocol": "openid-connect",
+      "attributes": {
+        "include.in.token.scope": "true",
+        "display.on.consent.screen": "true"
+      },
+      "protocolMappers": [
+        {
+          "name": "realm roles mapper clientes:read",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-realm-role-mapper",
+          "consentRequired": false,
+          "config": {
+            "claim.name": "roles",
+            "jsonType.label": "String",
+            "multivalued": "true",
+            "userinfo.token.claim": "true",
+            "id.token.claim": "true",
+            "access.token.claim": "true"
+          }
+        }
+      ]
+    },
+    {
+      "name": "clientes:write",
+      "description": "Scope que permite acceso de escritura a los clientes",
+      "protocol": "openid-connect",
+      "attributes": {
+        "include.in.token.scope": "true",
+        "display.on.consent.screen": "true"
+      },
+      "protocolMappers": [
+        {
+          "name": "realm roles mapper clientes:write",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-realm-role-mapper",
+          "consentRequired": false,
+          "config": {
+            "claim.name": "roles",
+            "jsonType.label": "String",
+            "multivalued": "true",
+            "userinfo.token.claim": "true",
+            "id.token.claim": "true",
+            "access.token.claim": "true"
+          }
+        }
+      ]
+    },
+    {
+      "name": "conductores:read",
+      "description": "Scope que permite acceso de lectura a los conductores",
+      "protocol": "openid-connect",
+      "attributes": {
+        "include.in.token.scope": "true",
+        "display.on.consent.screen": "true"
+      },
+      "protocolMappers": [
+        {
+          "name": "realm roles mapper conductores:read",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-realm-role-mapper",
+          "consentRequired": false,
+          "config": {
+            "claim.name": "roles",
+            "jsonType.label": "String",
+            "multivalued": "true",
+            "userinfo.token.claim": "true",
+            "id.token.claim": "true",
+            "access.token.claim": "true"
+          }
+        }
+      ]
+    },
+    {
+      "name": "conductores:write",
+      "description": "Scope que permite acceso de escritura a los conductores",
+      "protocol": "openid-connect",
+      "attributes": {
+        "include.in.token.scope": "true",
+        "display.on.consent.screen": "true"
+      },
+      "protocolMappers": [
+        {
+          "name": "realm roles mapper conductores:write",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-realm-role-mapper",
+          "consentRequired": false,
+          "config": {
+            "claim.name": "roles",
+            "jsonType.label": "String",
+            "multivalued": "true",
+            "userinfo.token.claim": "true",
+            "id.token.claim": "true",
+            "access.token.claim": "true"
+          }
+        }
+      ]
+    }
+  ],
+  "clients": [
+    {
+      "clientId": "grupo-01",
+      "name": "Cliente del grupo 01",
+      "enabled": true,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "68230b9a-f540-4e16-9f56-19180f303676",
+      "redirectUris": [
+        "*"
+      ],
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": true,
+      "protocol": "openid-connect",
+      "defaultClientScopes": [
+        "conductores:read",
+        "conductores:write"
+      ],
+      "attributes": {
+        "post.logout.redirect.uris": "*"
+      }
+    },
+    {
+      "clientId": "grupo-02",
+      "name": "Cliente del grupo 02",
+      "enabled": true,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "a83f29c1-7d42-4e65-9b31-82f6a0d5c714",
+      "redirectUris": [
+        "*"
+      ],
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": true,
+      "protocol": "openid-connect",
+      "defaultClientScopes": [
+        "conductores:read",
+        "conductores:write"
+      ],
+      "attributes": {
+        "post.logout.redirect.uris": "*"
+      }
+    },
+    {
+      "clientId": "grupo-03",
+      "name": "Cliente del grupo 03",
+      "enabled": true,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "b72e4f91-6c35-48a2-a017-93d5e8b62410",
+      "redirectUris": [
+        "*"
+      ],
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": true,
+      "protocol": "openid-connect",
+      "defaultClientScopes": [
+        "conductores:read",
+        "conductores:write"
+      ],
+      "attributes": {
+        "post.logout.redirect.uris": "*"
+      }
+    },
+    {
+      "clientId": "grupo-04",
+      "name": "Cliente del grupo 04",
+      "enabled": true,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "c91a5d72-3e84-4b16-8f20-a6d9c713e542",
+      "redirectUris": [
+        "*"
+      ],
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": true,
+      "protocol": "openid-connect",
+      "defaultClientScopes": [
+        "conductores:read",
+        "conductores:write"
+      ],
+      "attributes": {
+        "post.logout.redirect.uris": "*"
+      }
+    },
+    {
+      "clientId": "grupo-05",
+      "name": "Cliente del grupo 05",
+      "enabled": true,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "d45b8a21-9f63-4c07-b2e5-71a9d830f416",
+      "redirectUris": [
+        "*"
+      ],
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": true,
+      "protocol": "openid-connect",
+      "defaultClientScopes": [
+        "conductores:read",
+        "conductores:write"
+      ],
+      "attributes": {
+        "post.logout.redirect.uris": "*"
+      }
+    },
+    {
+      "clientId": "grupo-06",
+      "name": "Cliente del grupo 06",
+      "enabled": true,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "e62c4a19-8b75-43d0-9f21-56a3c7b84210",
+      "redirectUris": [
+        "*"
+      ],
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": true,
+      "protocol": "openid-connect",
+      "defaultClientScopes": [
+        "conductores:read",
+        "conductores:write"
+      ],
+      "attributes": {
+        "post.logout.redirect.uris": "*"
+      }
+    },
+    {
+      "clientId": "grupo-07",
+      "name": "Cliente del grupo 07",
+      "enabled": true,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "f31d7b82-4a96-45c0-a128-6e9b3d705214",
+      "redirectUris": [
+        "*"
+      ],
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": true,
+      "protocol": "openid-connect",
+      "defaultClientScopes": [
+        "conductores:read",
+        "conductores:write"
+      ],
+      "attributes": {
+        "post.logout.redirect.uris": "*"
+      }
+    },
+    {
+      "clientId": "grupo-08",
+      "name": "Cliente del grupo 08",
+      "enabled": true,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "a57e2c91-6d43-4f08-b315-82c9e7a14630",
+      "redirectUris": [
+        "*"
+      ],
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": true,
+      "protocol": "openid-connect",
+      "defaultClientScopes": [
+        "conductores:read",
+        "conductores:write"
+      ],
+      "attributes": {
+        "post.logout.redirect.uris": "*"
+      }
+    },
+    {
+      "clientId": "grupo-09",
+      "name": "Cliente del grupo 09",
+      "enabled": true,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "b84f1a63-2d97-4c50-a831-6e5d9f207142",
+      "redirectUris": [
+        "*"
+      ],
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": true,
+      "protocol": "openid-connect",
+      "defaultClientScopes": [
+        "conductores:read",
+        "conductores:write"
+      ],
+      "attributes": {
+        "post.logout.redirect.uris": "*"
+      }
+    },
+    {
+      "clientId": "grupo-10",
+      "name": "Cliente del grupo 10",
+      "enabled": true,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "c72a9e41-5b83-46d0-a217-8f3c6d905124",
+      "redirectUris": [
+        "*"
+      ],
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": true,
+      "protocol": "openid-connect",
+      "defaultClientScopes": [
+        "conductores:read",
+        "conductores:write"
+      ],
+      "attributes": {
+        "post.logout.redirect.uris": "*"
+      }
+    },
+    {
+      "clientId": "grupo-11",
+      "name": "Cliente del grupo 11",
+      "enabled": true,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "d93b6e21-4a85-47c0-b162-9f7d3a508214",
+      "redirectUris": [
+        "*"
+      ],
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": true,
+      "protocol": "openid-connect",
+      "defaultClientScopes": [
+        "conductores:read",
+        "conductores:write"
+      ],
+      "attributes": {
+        "post.logout.redirect.uris": "*"
+      }
+    },
+    {
+      "clientId": "grupo-12",
+      "name": "Cliente del grupo 12",
+      "enabled": true,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "e41c8a72-3d95-4b06-a127-6f9e2c503814",
+      "redirectUris": [
+        "*"
+      ],
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": true,
+      "protocol": "openid-connect",
+      "defaultClientScopes": [
+        "conductores:read",
+        "conductores:write"
+      ],
+      "attributes": {
+        "post.logout.redirect.uris": "*"
+      }
+    },
+    {
+      "clientId": "grupo-13",
+      "name": "Cliente del grupo 13",
+      "enabled": true,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "f26d9b41-7c53-48a0-b216-5e8d3c709124",
+      "redirectUris": [
+        "*"
+      ],
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": true,
+      "protocol": "openid-connect",
+      "defaultClientScopes": [
+        "conductores:read",
+        "conductores:write"
+      ],
+      "attributes": {
+        "post.logout.redirect.uris": "*"
+      }
+    },
+    {
+      "clientId": "grupo-14",
+      "name": "Cliente del grupo 14",
+      "enabled": true,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "b63e1a92-5d74-4f08-9c31-7a2d6e805142",
+      "redirectUris": [
+        "*"
+      ],
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": true,
+      "protocol": "openid-connect",
+      "defaultClientScopes": [
+        "conductores:read",
+        "conductores:write"
+      ],
+      "attributes": {
+        "post.logout.redirect.uris": "*"
+      }
+    },
+    {
+      "clientId": "grupo-15",
+      "name": "Cliente del grupo 15",
+      "enabled": true,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "a92d7c51-3e64-4b80-b216-9f5a8d307124",
+      "redirectUris": [
+        "*"
+      ],
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": true,
+      "protocol": "openid-connect",
+      "defaultClientScopes": [
+        "conductores:read",
+        "conductores:write"
+      ],
+      "attributes": {
+        "post.logout.redirect.uris": "*"
+      }
+    },
+    {
+      "clientId": "grupo-17",
+      "name": "Cliente del grupo 17",
+      "enabled": true,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "d51a8e72-6c94-4f30-b217-9e5d3a608142",
+      "redirectUris": [
+        "*"
+      ],
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": true,
+      "protocol": "openid-connect",
+      "defaultClientScopes": [
+        "conductores:read",
+        "conductores:write"
+      ],
+      "attributes": {
+        "post.logout.redirect.uris": "*"
+      }
+    },
+    {
+      "clientId": "m6-desarrollo",
+      "name": "M6 desarrollo: tokens de usuario (usuario y contrasena)",
+      "enabled": true,
+      "publicClient": true,
+      "directAccessGrantsEnabled": true,
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "serviceAccountsEnabled": false,
+      "protocol": "openid-connect",
+      "redirectUris": [
+        "*"
+      ],
+      "webOrigins": [
+        "*"
+      ],
+      "defaultClientScopes": [
+        "clientes:read",
+        "clientes:write",
+        "conductores:read",
+        "conductores:write"
+      ],
+      "attributes": {
+        "post.logout.redirect.uris": "*"
+      }
+    }
+  ],
+  "users": [
+    {
+      "username": "service-account-grupo-01",
+      "enabled": true,
+      "serviceAccountClientId": "grupo-01",
+      "realmRoles": [
+        "clientes-be",
+        "SERVICIO"
+      ]
+    },
+    {
+      "username": "service-account-grupo-02",
+      "enabled": true,
+      "serviceAccountClientId": "grupo-02",
+      "realmRoles": [
+        "conductores-be"
+      ]
+    },
+    {
+      "username": "service-account-grupo-03",
+      "enabled": true,
+      "serviceAccountClientId": "grupo-03",
+      "realmRoles": [
+        "ubicacion-be"
+      ]
+    },
+    {
+      "username": "service-account-grupo-04",
+      "enabled": true,
+      "serviceAccountClientId": "grupo-04",
+      "realmRoles": [
+        "solicitud-be",
+        "SERVICIO"
+      ]
+    },
+    {
+      "username": "service-account-grupo-05",
+      "enabled": true,
+      "serviceAccountClientId": "grupo-05",
+      "realmRoles": [
+        "viajes-be"
+      ]
+    },
+    {
+      "username": "service-account-grupo-06",
+      "enabled": true,
+      "serviceAccountClientId": "grupo-06",
+      "realmRoles": [
+        "tarifas-be"
+      ]
+    },
+    {
+      "username": "service-account-grupo-07",
+      "enabled": true,
+      "serviceAccountClientId": "grupo-07",
+      "realmRoles": [
+        "notificaciones-be"
+      ]
+    },
+    {
+      "username": "service-account-grupo-08",
+      "enabled": true,
+      "serviceAccountClientId": "grupo-08",
+      "realmRoles": [
+        "reservas-be"
+      ]
+    },
+    {
+      "username": "service-account-grupo-09",
+      "enabled": true,
+      "serviceAccountClientId": "grupo-09",
+      "realmRoles": [
+        "reservas-be"
+      ]
+    },
+    {
+      "username": "service-account-grupo-10",
+      "enabled": true,
+      "serviceAccountClientId": "grupo-10",
+      "realmRoles": [
+        "notificaciones-be"
+      ]
+    },
+    {
+      "username": "service-account-grupo-11",
+      "enabled": true,
+      "serviceAccountClientId": "grupo-11",
+      "realmRoles": [
+        "tarifas-be"
+      ]
+    },
+    {
+      "username": "service-account-grupo-12",
+      "enabled": true,
+      "serviceAccountClientId": "grupo-12",
+      "realmRoles": [
+        "viajes-be"
+      ]
+    },
+    {
+      "username": "service-account-grupo-13",
+      "enabled": true,
+      "serviceAccountClientId": "grupo-13",
+      "realmRoles": [
+        "solicitud-be",
+        "SERVICIO"
+      ]
+    },
+    {
+      "username": "service-account-grupo-14",
+      "enabled": true,
+      "serviceAccountClientId": "grupo-14",
+      "realmRoles": [
+        "ubicacion-be"
+      ]
+    },
+    {
+      "username": "service-account-grupo-15",
+      "enabled": true,
+      "serviceAccountClientId": "grupo-15",
+      "realmRoles": [
+        "conductores-be"
+      ]
+    },
+    {
+      "username": "service-account-grupo-17",
+      "enabled": true,
+      "serviceAccountClientId": "grupo-17",
+      "realmRoles": [
+        "clientes-be",
+        "SERVICIO"
+      ]
+    },
+    {
+      "id": "b55573fa-60ed-4a01-a218-8adcfa18384e",
+      "createdTimestamp": 1760555989656,
+      "username": "test-user",
+      "enabled": true,
+      "totp": false,
+      "emailVerified": true,
+      "firstName": "Test User",
+      "lastName": "Verified",
+      "email": "test@gmail.com",
+      "credentials": [
+        {
+          "id": "5fd3431d-1fc8-40d0-99bb-5cc9f3fcf45e",
+          "type": "password",
+          "userLabel": "My password",
+          "createdDate": 1760556005303,
+          "secretData": "{\"value\":\"aRhofYek4hgOTwfP+Aj3hS6S73cWl7qlKMMLQYcQQcU=\",\"salt\":\"hPTh2NF5pmBX5Kd32h72HA==\",\"additionalParameters\":{}}",
+          "credentialData": "{\"hashIterations\":27500,\"algorithm\":\"pbkdf2-sha256\",\"additionalParameters\":{}}"
+        }
+      ],
+      "disableableCredentialTypes": [],
+      "requiredActions": [],
+      "realmRoles": [
+        "default-roles-ds-2026-realm"
+      ],
+      "notBefore": 0,
+      "groups": []
+    },
+    {
+      "id": "c1e00000-0000-4000-8000-000000000001",
+      "createdTimestamp": 1795617000516,
+      "username": "cliente1",
+      "enabled": true,
+      "totp": false,
+      "emailVerified": true,
+      "firstName": "Cliente",
+      "lastName": "Uno",
+      "email": "cliente1@ejemplo.test",
+      "credentials": [
+        {
+          "type": "password",
+          "userLabel": "Contrasena de desarrollo",
+          "createdDate": 1795617000521,
+          "secretData": "{\"value\":\"xDqT5wqldihAdMasCEZtpajzmF58cm4piLI07vrv1xY=\",\"salt\":\"qkdsZAdtwdyEDQBBygwpHQ==\",\"additionalParameters\":{}}",
+          "credentialData": "{\"hashIterations\":27500,\"algorithm\":\"pbkdf2-sha256\",\"additionalParameters\":{}}"
+        }
+      ],
+      "disableableCredentialTypes": [],
+      "requiredActions": [],
+      "realmRoles": [
+        "CLIENTE"
+      ],
+      "notBefore": 0,
+      "groups": []
+    },
+    {
+      "id": "c0d00000-0000-4000-8000-000000000001",
+      "createdTimestamp": 1795617000522,
+      "username": "conductor1",
+      "enabled": true,
+      "totp": false,
+      "emailVerified": true,
+      "firstName": "Conductor",
+      "lastName": "Uno",
+      "email": "conductor1@ejemplo.test",
+      "credentials": [
+        {
+          "type": "password",
+          "userLabel": "Contrasena de desarrollo",
+          "createdDate": 1795617000526,
+          "secretData": "{\"value\":\"MdkcQEN2iJYTSadiDOAh/54SvX5fiaVM7c9y2EPXC3E=\",\"salt\":\"5smnSCoUTsAoemoD5m5FSw==\",\"additionalParameters\":{}}",
+          "credentialData": "{\"hashIterations\":27500,\"algorithm\":\"pbkdf2-sha256\",\"additionalParameters\":{}}"
+        }
+      ],
+      "disableableCredentialTypes": [],
+      "requiredActions": [],
+      "realmRoles": [
+        "CONDUCTOR"
+      ],
+      "notBefore": 0,
+      "groups": []
+    },
+    {
+      "id": "0be00000-0000-4000-8000-000000000001",
+      "createdTimestamp": 1795617000526,
+      "username": "operador1",
+      "enabled": true,
+      "totp": false,
+      "emailVerified": true,
+      "firstName": "Operador",
+      "lastName": "Uno",
+      "email": "operador1@ejemplo.test",
+      "credentials": [
+        {
+          "type": "password",
+          "userLabel": "Contrasena de desarrollo",
+          "createdDate": 1795617000531,
+          "secretData": "{\"value\":\"7yZWySX73nmb0G/bcdLZS4y4M+6nabzQ8qb9GeRpYIk=\",\"salt\":\"AdGczzEK5TupbacVNFhAXw==\",\"additionalParameters\":{}}",
+          "credentialData": "{\"hashIterations\":27500,\"algorithm\":\"pbkdf2-sha256\",\"additionalParameters\":{}}"
+        }
+      ],
+      "disableableCredentialTypes": [],
+      "requiredActions": [],
+      "realmRoles": [
+        "OPERADOR"
+      ],
+      "notBefore": 0,
+      "groups": []
+    }
+  ]
+}

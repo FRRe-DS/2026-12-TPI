@@ -58,7 +58,7 @@ export async function handleContractRouter(
     }
 
     // Middleware de Autenticación JWT (M1)
-    const auth = authenticateMiddleware(req);
+    const auth = await authenticateMiddleware(req);
     applyRateLimit(auth, res);
 
     // 2. POST /trips
@@ -112,18 +112,6 @@ export async function handleContractRouter(
       // 9. GET /trips/{id}/history
       if (req.method === "GET" && action === "/history") {
         await tripController.getTripHistory(tripId, res, auth, correlationId);
-        return true;
-      }
-
-      // 10. POST /trips/{id}/client-rating (el cliente califica al conductor, RF-6.5)
-      if (req.method === "POST" && action === "/client-rating") {
-        await tripController.rateTrip(tripId, "CLIENT", req, res, auth, correlationId);
-        return true;
-      }
-
-      // 11. POST /trips/{id}/driver-rating (el conductor califica al cliente, RF-6.5)
-      if (req.method === "POST" && action === "/driver-rating") {
-        await tripController.rateTrip(tripId, "DRIVER", req, res, auth, correlationId);
         return true;
       }
     }

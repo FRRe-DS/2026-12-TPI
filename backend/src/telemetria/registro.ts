@@ -3,10 +3,10 @@ import { getRPCMetadata, RPCType } from "@opentelemetry/core";
 import type { Span } from "@opentelemetry/api";
 import type http from "node:http";
 
-function routeName(path: string): string {
+export function routeName(path: string): string {
   const prefix = path.startsWith("/api/v1/") ? "/api/v1" : "";
   const rest = prefix ? path.slice(prefix.length) : path;
-  if (/^\/trips\/[^/]+(?:\/(?:arrived|start|complete|cancel|history|client-rating|driver-rating))?$/.test(rest)) {
+  if (/^\/trips\/[^/]+(?:\/(?:arrived|start|complete|cancel|history))?$/.test(rest)) {
     return prefix + rest.replace(/^\/trips\/[^/]+/, "/trips/{id}");
   }
   if (["/", "/trips", "/api/data", "/api/seed", "/api/trips", "/api/transition", "/api/demo-tokens", "/docs", "/openapi.yaml"].includes(rest)) {

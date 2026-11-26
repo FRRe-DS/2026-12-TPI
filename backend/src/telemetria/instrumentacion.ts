@@ -15,6 +15,7 @@ import { NodeSDK } from "@opentelemetry/sdk-node";
 import { BatchSpanProcessor } from "@opentelemetry/sdk-trace";
 import type { SpanProcessor, ReadableSpan } from "@opentelemetry/sdk-trace";
 import type { Context, Span } from "@opentelemetry/api";
+import { routeName } from "./registro.js";
 
 // El panel de OpsBoard consulta esta serie. Prisma produce spans de consulta,
 // pero no el histograma de cliente de BD que produce la instrumentacion de pg.
@@ -47,7 +48,13 @@ if (process.env.OTEL_EXPORTER_OTLP_ENDPOINT && process.env.OTEL_SDK_DISABLED !==
     })],
     logRecordProcessors: [new BatchLogRecordProcessor({ exporter: new OTLPLogExporter() })],
     instrumentations: [
-      new HttpInstrumentation({ ignoreIncomingRequestHook: (request) => request.url?.startsWith("/health") ?? false }),
+      new HttpInstrumentation({
+        ignoreIncomingRequestHook: (request) => request.url?.startsWith("/health") ?? false,
+        startIncomingSpanHook: ({ url }) => {
+          const path = URL.parse(url ?? "/", "http://localhost")?.pathname ?? "/{unmatched}";
+          return { "url.path": routeName(path), "url.query": undefined };
+        },
+      }),
       new PrismaInstrumentation(),
       new UndiciInstrumentation(),
       new RuntimeNodeInstrumentation(),
