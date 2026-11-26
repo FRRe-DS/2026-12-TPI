@@ -114,18 +114,6 @@ export async function handleContractRouter(
         await tripController.getTripHistory(tripId, res, auth, correlationId);
         return true;
       }
-
-      // 10. POST /trips/{id}/client-rating (el cliente califica al conductor, RF-6.5)
-      if (req.method === "POST" && action === "/client-rating") {
-        await tripController.rateTrip(tripId, "CLIENT", req, res, auth, correlationId);
-        return true;
-      }
-
-      // 11. POST /trips/{id}/driver-rating (el conductor califica al cliente, RF-6.5)
-      if (req.method === "POST" && action === "/driver-rating") {
-        await tripController.rateTrip(tripId, "DRIVER", req, res, auth, correlationId);
-        return true;
-      }
     }
 
     throw new ApiError(
