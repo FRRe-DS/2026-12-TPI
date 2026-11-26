@@ -154,8 +154,8 @@ Si la tarea toca alguna de estas, marcala como decision pendiente, explica las o
 3. Si el operador puede cancelar viajes. #resuelta
 4. Si se guardan origen y destino como copia (instantanea) en M6, y con que justificacion.
 5. Si M6 controla que la distancia informada por el conductor sea razonable, y si eso implica una dependencia opcional con M4.
-6. Como se valida el token de Keycloak: localmente o consultando a M1.
-7. Quien levanta Keycloak en el entorno de desarrollo.
+6. Como se valida el token de Keycloak: localmente o consultando a M1. #resuelta: localmente, con la firma RS256 y el JWKS del emisor; si el emisor no responde se devuelve 503.
+7. Quien levanta Keycloak en el entorno de desarrollo. #resuelta: el `docker-compose.yml` del modulo lo levanta en 8081 con un realm derivado del de la catedra.
 8. Alcance exacto de cada entrega.
 
 ## 11. Migraciones de Prisma
