@@ -6,7 +6,6 @@ import type {
   VehicleType,
   ActorRole,
   CancellationReason,
-  TripRating,
 } from "../../generated/prisma/client.js";
 import { isCancellationReason } from "../domain/cancellation-rules.js";
 
@@ -201,27 +200,4 @@ export function toTripHistory(tripId: string, rows: TripEventHistory[]) {
   }));
 
   return { tripId, transitions };
-}
-
-/** Calificación de un viaje tal como se devuelve en la API (RF-6.5). */
-export interface TripRatingResponse {
-  tripId: string;
-  ratedBy: "CLIENT" | "DRIVER";
-  raterId: string;
-  ratedId: string;
-  score: number;
-  comment: string | null;
-  createdAt: string;
-}
-
-export function toTripRatingResponse(rating: TripRating): TripRatingResponse {
-  return {
-    tripId: rating.tripId,
-    ratedBy: rating.ratedBy,
-    raterId: rating.raterId,
-    ratedId: rating.ratedId,
-    score: rating.score,
-    comment: rating.comment,
-    createdAt: rating.createdAt.toISOString(),
-  };
 }
