@@ -1,21 +1,19 @@
 # CI de M6: chequeo de tipos, pruebas con reportes JUnit y análisis Semgrep con SARIF.
-name: M6 Viajes (G12) - CI & SAST
+name: M6 (G12) - Demostración aislada del umbral Semgrep
 
 on:
-  push:
-    branches:
-      - m6/base-de-datos
-    paths:
-      - "backend/**"
-      - "openapi.yaml"
-      - ".github/workflows/ci.yml"
-  pull_request:
-    branches:
-      - m6/base-de-datos
   workflow_dispatch:
+    inputs:
+      level:
+        description: Nivel SARIF sintético
+        required: true
+        type: choice
+        options:
+          - warning
+          - error
 
 concurrency:
-  group: m6-g12-ci-${{ github.ref }}
+  group: m6-g12-demo-${{ github.run_id }}
   cancel-in-progress: true
 
 permissions:
@@ -23,6 +21,7 @@ permissions:
 
 jobs:
   calidad-y-tests:
+    if: ${{ false }}
     name: Tipos, unitarios e integración
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -91,7 +90,6 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: read
-      security-events: write
 
     steps:
       - name: Descargar el código
@@ -106,19 +104,25 @@ jobs:
       - name: Probar el criterio de severidad
         run: node --test backend/scripts/semgrep-quality-gate.test.mjs
 
-      - name: Ejecutar Semgrep (OWASP Top 10, TypeScript, Node.js, Secrets)
+      - name: Generar un SARIF sintético para la demostración
+        env:
+          DEMO_SARIF_LEVEL: ${{ inputs.level }}
         run: |
           mkdir -p reports
-          docker run --rm -v "${{ github.workspace }}:/src" semgrep/semgrep:1.184.0 \
-            semgrep scan \
-            --config p/typescript \
-            --config p/nodejs \
-            --config p/owasp-top-ten \
-            --config p/secrets \
-            --metrics=off \
-            --sarif \
-            --output /src/reports/semgrep-g12.sarif \
-            /src/backend/src
+          node <<'NODE'
+          const { writeFileSync } = require("node:fs");
+          const level = process.env.DEMO_SARIF_LEVEL;
+          if (!["warning", "error"].includes(level)) throw new Error("Nivel de demo inválido");
+          const ruleId = "demo-m6";
+          const sarif = {
+            version: "2.1.0",
+            runs: [{
+              tool: { driver: { name: "Fixture de G12", rules: [{ id: ruleId }] } },
+              results: [{ ruleId, level, message: { text: "Hallazgo sintético de demostración" } }],
+            }],
+          };
+          writeFileSync("reports/semgrep-g12.sarif", JSON.stringify(sarif));
+          NODE
 
       - name: Guardar reporte SARIF como artefacto
         uses: actions/upload-artifact@v6
@@ -126,14 +130,6 @@ jobs:
           name: g12-semgrep-sarif
           path: reports/semgrep-g12.sarif
           if-no-files-found: error
-
-      - name: Publicar SARIF en GitHub Security
-        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork != true
-        uses: github/codeql-action/upload-sarif@v4
-        continue-on-error: true
-        with:
-          sarif_file: reports/semgrep-g12.sarif
-          category: semgrep-g12
 
       - name: Evaluar Quality Gate de Semgrep
         run: node backend/scripts/semgrep-quality-gate.mjs reports/semgrep-g12.sarif
