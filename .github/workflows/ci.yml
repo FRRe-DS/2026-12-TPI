@@ -121,13 +121,15 @@ jobs:
             -e POSTGRES_PASSWORD=m6password \
             -e POSTGRES_DB=m6_trips \
             postgres:16-alpine
+          # pg_isready por TCP: el servidor temporal del entrypoint solo escucha por socket Unix
+          # y, si se consulta por socket, el loop corta antes de que arranque el servidor real.
           for i in $(seq 1 30); do
-            if docker exec "${RED}-db" pg_isready -U m6user -d m6_trips >/dev/null 2>&1; then
+            if docker exec "${RED}-db" pg_isready -h 127.0.0.1 -p 5432 -U m6user -d m6_trips >/dev/null 2>&1; then
               break
             fi
             sleep 1
           done
-          docker exec "${RED}-db" pg_isready -U m6user -d m6_trips
+          docker exec "${RED}-db" pg_isready -h 127.0.0.1 -p 5432 -U m6user -d m6_trips
           docker run -d --name "${RED}-api" --network "$RED" -p 3006:3006 \
             -e DATABASE_URL="postgresql://m6user:m6password@${RED}-db:5432/m6_trips?schema=public" \
             -e ENABLE_DEMO_AUTH=true \
