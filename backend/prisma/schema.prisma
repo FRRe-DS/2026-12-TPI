@@ -138,3 +138,18 @@ model IdempotencyKey {
   @@index([expiresAt])
   @@map("idempotency_keys")
 }
+
+model OutboxEvent {
+  id          Int       @id @default(autoincrement())
+  eventId     String    @unique @map("event_id") @db.Uuid
+  eventType   String    @map("event_type")
+  tripId      String    @map("trip_id") @db.Uuid
+  envelope    Json
+  createdAt   DateTime  @default(now()) @map("created_at")
+  publishedAt DateTime? @map("published_at")
+  attempts    Int       @default(0)
+  lastError   String?   @map("last_error")
+
+  @@index([publishedAt, id])
+  @@map("outbox_events")
+}
