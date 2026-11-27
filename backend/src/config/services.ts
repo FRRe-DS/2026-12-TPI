@@ -1,4 +1,8 @@
 import { prisma } from "./database.js";
+import { loadMessagingConfig } from "./messaging.js";
+import { OutboxRepository } from "../repositories/outbox.repository.js";
+import { RabbitMqPublisher } from "../services/rabbitmq-publisher.service.js";
+import { OutboxDispatcher } from "../services/outbox-dispatcher.service.js";
 import { TripRepository } from "../repositories/trip.repository.js";
 import { IdempotencyRepository } from "../repositories/idempotency.repository.js";
 import { eventPublisher } from "../services/event-publisher.service.js";
@@ -18,3 +22,9 @@ export const tripService = new TripService(tripRepository, eventPublisher, m8QrV
 export const idempotencyService = new IdempotencyService(new IdempotencyRepository(prisma));
 export const healthService = new HealthService(() => tripRepository.checkDatabaseHealth());
 export const tripController = new TripController(tripService, idempotencyService);
+
+/** Envío de eventos a RabbitMQ (RNF-10). Es null si no hay RABBITMQ_URL; lo arranca el servidor. */
+const messagingConfig = loadMessagingConfig();
+export const outboxDispatcher = messagingConfig
+  ? new OutboxDispatcher(new OutboxRepository(prisma), new RabbitMqPublisher(messagingConfig))
+  : null;

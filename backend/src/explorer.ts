@@ -4,7 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 import { prisma } from "./config/database.js";
-import { tripService } from "./config/services.js";
+import { tripService, outboxDispatcher } from "./config/services.js";
 import { handleContractRouter } from "./routes/trip.routes.js";
 import { eventPublisher } from "./services/event-publisher.service.js";
 import { createDemoJwt, isDemoAuthEnabled } from "./middlewares/auth.middleware.js";
@@ -323,5 +323,12 @@ if (process.env.NODE_ENV !== "test") {
     console.log(`   👉 Panel Visual de Persistencia: http://localhost:${PORT}`);
     console.log(`   👉 Swagger UI (OpenAPI):         http://localhost:${PORT}/docs`);
     console.log(`   👉 Health Check:                 http://localhost:${PORT}/health\n`);
+
+    if (outboxDispatcher) {
+      outboxDispatcher.start();
+      console.log("📨 Envío de eventos a RabbitMQ activado.");
+    } else {
+      console.warn("⚠️  RABBITMQ_URL no configurada: los eventos quedan pendientes en la outbox.");
+    }
   });
 }
