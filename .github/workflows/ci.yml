@@ -7,6 +7,7 @@ on:
       - m6/base-de-datos
     paths:
       - "backend/**"
+      - "frontend/**"
       - "openapi.yaml"
       - ".github/workflows/ci.yml"
   pull_request:
@@ -88,6 +89,38 @@ jobs:
           name: g12-vitest-reports
           path: backend/reports/*.xml
           if-no-files-found: warn
+
+  imagen:
+    name: Imagen Docker (GHCR)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: [calidad-y-tests, sast]
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Descargar el código
+        uses: actions/checkout@v5
+
+      - name: Construir la imagen
+        run: |
+          VERSION=$(node -p "require('./backend/package.json').version")
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          docker build -f backend/Dockerfile -t m6-viajes-g12:ci .
+
+      # Publica solo desde la rama base: los PR construyen la imagen pero no la suben.
+      - name: Publicar en GHCR
+        if: github.event_name == 'push' && github.ref == 'refs/heads/m6/base-de-datos'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          IMAGEN="ghcr.io/$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')/m6-viajes-g12"
+          echo "$GH_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          for TAG in "$VERSION" "sha-${GITHUB_SHA::7}" latest; do
+            docker tag m6-viajes-g12:ci "$IMAGEN:$TAG"
+            docker push "$IMAGEN:$TAG"
+          done
 
   sast:
     name: Análisis estático SAST (Semgrep)
