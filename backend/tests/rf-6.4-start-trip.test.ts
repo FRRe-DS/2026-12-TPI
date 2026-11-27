@@ -103,13 +103,12 @@ describe("RF-6.4 (Inicio validado con código QR / M8) - Pruebas Unitarias", () 
       })
     );
     expect(publisherMock.publish).toHaveBeenCalledWith(
-      "TripStarted",
-      tripId,
       expect.objectContaining({
-        clientId: validClientId,
-        driverId: validDriverId,
-      }),
-      correlationId
+        eventType: "TripStarted",
+        tripId,
+        payload: { clientId: validClientId, driverId: validDriverId },
+        correlationId,
+      })
     );
   });
 

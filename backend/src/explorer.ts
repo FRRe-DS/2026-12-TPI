@@ -131,38 +131,6 @@ export const server = http.createServer(async (req: http.IncomingMessage, res: h
           ],
         });
 
-        const t2 = await tx.trip.create({
-          data: {
-            requestId: req2,
-            clientId: "c2222222-2222-4222-8222-222222222222",
-            driverId: "d2222222-2222-4222-8222-222222222222",
-            vehicleId: "a2222222-2222-4222-8222-222222222222",
-            vehicleType: "AUTO",
-            originLatitude: -27.4411,
-            originLongitude: -58.9652,
-            destinationLatitude: -27.4321,
-            destinationLongitude: -58.9588,
-            state: "PENDING_ARRIVAL",
-          },
-        });
-        await tx.tripEventHistory.create({
-          data: {
-            tripId: t2.id,
-            sequence: 1,
-            action: "CREATE",
-            state: "PENDING_ARRIVAL",
-            actorId: "m5-dispatch-service",
-            actorRole: "SYSTEM",
-            metadata: { source: "M5_DISPATCH", requestId: req2 },
-          },
-        });
-        eventPublisher.publish("TripCreated", t2.id, {
-          requestId: req2,
-          clientId: t2.clientId,
-          driverId: t2.driverId,
-          vehicleId: t2.vehicleId,
-        });
-
         const client3 = "c3333333-3333-4333-8333-333333333333";
         const t3 = await tx.trip.create({
           data: {
@@ -188,6 +156,23 @@ export const server = http.createServer(async (req: http.IncomingMessage, res: h
         });
       });
 
+      // El viaje pendiente se crea por el service, como la API: guarda historial, outbox y evento completo.
+      await tripService.createTrip(
+        {
+          requestId: req2,
+          clientId: "c2222222-2222-4222-8222-222222222222",
+          driverId: "d2222222-2222-4222-8222-222222222222",
+          vehicleId: "a2222222-2222-4222-8222-222222222222",
+          vehicleType: "AUTO",
+          originLatitude: -27.4411,
+          originLongitude: -58.9652,
+          destinationLatitude: -27.4321,
+          destinationLongitude: -58.9588,
+        },
+        { sub: "m5-dispatch-service", role: "SYSTEM" },
+        crypto.randomUUID()
+      );
+          
       return sendJson(res, 201, { message: "Datos de prueba insertados correctamente", previousCount: count });
     }
 
@@ -227,41 +212,21 @@ export const server = http.createServer(async (req: http.IncomingMessage, res: h
         }
       }
 
-      const created = await prisma.$transaction(async (tx) => {
-        const trip = await tx.trip.create({
-          data: {
-            requestId,
-            clientId,
-            driverId,
-            vehicleId,
-            vehicleType: "AUTO",
-            originLatitude,
-            originLongitude,
-            destinationLatitude,
-            destinationLongitude,
-            state: "PENDING_ARRIVAL",
-          },
-        });
-        await tx.tripEventHistory.create({
-          data: {
-            tripId: trip.id,
-            sequence: 1,
-            action: "CREATE",
-            state: "PENDING_ARRIVAL",
-            actorId: "m5-dispatch-service",
-            actorRole: "SYSTEM",
-            metadata: { source: "M5_DISPATCH", requestId },
-          },
-        });
-        return trip;
-      });
-
-      eventPublisher.publish("TripCreated", created.id, {
-        requestId,
-        clientId,
-        driverId,
-        vehicleId,
-      });
+      const { trip: created } = await tripService.createTrip(
+        {
+          requestId,
+          clientId,
+          driverId,
+          vehicleId,
+          vehicleType: "AUTO",
+          originLatitude,
+          originLongitude,
+          destinationLatitude,
+          destinationLongitude,
+        },
+        { sub: "m5-dispatch-service", role: "SYSTEM" },
+        crypto.randomUUID()
+      );
 
       return sendJson(res, 201, { idempotentReplay: false, trip: created });
     }

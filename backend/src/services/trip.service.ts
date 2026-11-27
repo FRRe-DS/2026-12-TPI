@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import type { TripState as PrismaTripState } from "../../generated/prisma/client.js";
 import type { AuthContext } from "../middlewares/auth.middleware.js";
 import { ApiError } from "../middlewares/error.middleware.js";
@@ -7,6 +8,7 @@ import { assertIfMatch } from "../middlewares/preconditions.js";
 import {
   buildTripCompletedPayload,
   buildTripCreatedPayload,
+  createDomainEvent,
   type EventPublisherService,
 } from "./event-publisher.service.js";
 import {
@@ -122,9 +124,27 @@ export class TripService {
       );
     }
 
-    const created = await this.tripRepository.createTripWithInitialEvent(input, auth.sub);
+    // El id se elige antes de guardar: el evento ya lo lleva y se guarda en la misma transacción.
+    const tripId = crypto.randomUUID();
+    const event = createDomainEvent(
+      "TripCreated",
+      tripId,
+      buildTripCreatedPayload({
+        ...input,
+        reservationId: input.reservationId ?? null,
+        originAddress: input.originAddress ?? null,
+        destinationAddress: input.destinationAddress ?? null,
+      }),
+      correlationId
+    );
 
-    this.publisher.publish("TripCreated", created.id, buildTripCreatedPayload(created), correlationId);
+    const created = await this.tripRepository.createTripWithInitialEvent(
+      { ...input, id: tripId },
+      auth.sub,
+      event
+    );
+
+    this.publisher.publish(event);
 
     return { statusCode: 201 as const, trip: created };
     });
@@ -208,6 +228,13 @@ export class TripService {
     // Validación formal mediante la máquina de estados de dominio (RF-6.1)
     this.validateStateTransition(trip.state, TripState.DRIVER_ARRIVED, auth.role);
 
+    const event = createDomainEvent(
+      "DriverArrived",
+      tripId,
+      { clientId: trip.clientId, driverId: trip.driverId },
+      correlationId
+    );
+
     const updated = await this.tripRepository.transitionStateAtomic({
       tripId,
       expectedFromState: trip.state,
@@ -215,18 +242,14 @@ export class TripService {
       action: "REGISTER_ARRIVAL",
       actorId: auth.sub,
       actorRole: "DRIVER",
+      domainEvent: event,
     });
 
     if (!updated) {
       throw new ApiError(409, "CONCURRENCY_CONFLICT", "El estado del viaje cambió concurrentemente.");
     }
 
-    this.publisher.publish(
-      "DriverArrived",
-      tripId,
-      { clientId: trip.clientId, driverId: trip.driverId },
-      correlationId
-    );
+    this.publisher.publish(event);
 
     return updated;
     });
@@ -280,6 +303,13 @@ export class TripService {
       );
     }
 
+    const event = createDomainEvent(
+      "TripStarted",
+      tripId,
+      { clientId: trip.clientId, driverId: trip.driverId },
+      correlationId
+    );
+
     const updated = await this.tripRepository.transitionStateAtomic({
       tripId,
       expectedFromState: trip.state,
@@ -288,18 +318,14 @@ export class TripService {
       actorId: auth.sub,
       actorRole: "DRIVER",
       metadata: { qrVerifiedWithM8: true, tokenPrefix: verificationToken.slice(0, 10) },
+      domainEvent: event,
     });
 
     if (!updated) {
       throw new ApiError(409, "CONCURRENCY_CONFLICT", "El estado del viaje cambió concurrentemente.");
     }
 
-    this.publisher.publish(
-      "TripStarted",
-      tripId,
-      { clientId: trip.clientId, driverId: trip.driverId },
-      correlationId
-    );
+    this.publisher.publish(event);
 
     return updated;
     });
@@ -349,31 +375,7 @@ export class TripService {
     );
     const durationMinutes = Math.max(1, Math.round(durationSeconds / 60));
 
-    const updated = await this.tripRepository.transitionStateAtomic({
-      tripId,
-      expectedFromState: trip.state,
-      targetState: "COMPLETED",
-      action: "COMPLETE",
-      actorId: auth.sub,
-      actorRole: "DRIVER",
-      distanceKm: metrics.distanceKm,
-      durationSeconds,
-      durationMinutes,
-      completedAt,
-      ...(metrics.finalLatitude !== undefined ? { finalLatitude: metrics.finalLatitude } : {}),
-      ...(metrics.finalLongitude !== undefined ? { finalLongitude: metrics.finalLongitude } : {}),
-      metadata: { distanceKm: metrics.distanceKm, durationSeconds, durationMinutes },
-    });
-
-    if (!updated) {
-      throw new ApiError(
-        409,
-        "CONCURRENCY_CONFLICT",
-        "El viaje ya fue finalizado concurrentemente (RNF-08)."
-      );
-    }
-
-    this.publisher.publish(
+    const event = createDomainEvent(
       "TripCompleted",
       tripId,
       buildTripCompletedPayload({
@@ -388,6 +390,33 @@ export class TripService {
       }),
       correlationId
     );
+
+    const updated = await this.tripRepository.transitionStateAtomic({
+      tripId,
+      expectedFromState: trip.state,
+      targetState: "COMPLETED",
+      action: "COMPLETE",
+      actorId: auth.sub,
+      actorRole: "DRIVER",
+      distanceKm: metrics.distanceKm,
+      durationSeconds,
+      durationMinutes,
+      completedAt,
+      ...(metrics.finalLatitude !== undefined ? { finalLatitude: metrics.finalLatitude } : {}),
+      ...(metrics.finalLongitude !== undefined ? { finalLongitude: metrics.finalLongitude } : {}),
+      metadata: { distanceKm: metrics.distanceKm, durationSeconds, durationMinutes },
+      domainEvent: event,
+    });
+
+    if (!updated) {
+      throw new ApiError(
+        409,
+        "CONCURRENCY_CONFLICT",
+        "El viaje ya fue finalizado concurrentemente (RNF-08)."
+      );
+    }
+
+    this.publisher.publish(event);
 
     return updated;
     });
@@ -449,6 +478,23 @@ export class TripService {
       Math.floor((Date.now() - new Date(trip.createdAt).getTime()) / 1000)
     );
 
+    const event = createDomainEvent(
+      "TripCancelled",
+      tripId,
+      {
+        requestId: trip.requestId,
+        clientId: trip.clientId,
+        driverId: trip.driverId,
+        cancelledBy,
+        reason: input.reason,
+        ...(input.detail ? { detail: input.detail } : {}),
+        previousState,
+        requiresRedispatch: redispatch,
+        secondsSinceCreation,
+      },
+      correlationId
+    );
+
     const updated = await this.tripRepository.transitionStateAtomic({
       tripId,
       expectedFromState: previousState,
@@ -469,28 +515,14 @@ export class TripService {
         requiresRedispatch: redispatch,
         ...(input.detail ? { detail: input.detail } : {}),
       },
+      domainEvent: event,
     });
 
     if (!updated) {
       throw new ApiError(409, "CONCURRENCY_CONFLICT", "El estado del viaje cambió concurrentemente.");
     }
 
-    this.publisher.publish(
-      "TripCancelled",
-      tripId,
-      {
-        requestId: trip.requestId,
-        clientId: trip.clientId,
-        driverId: trip.driverId,
-        cancelledBy,
-        reason: input.reason,
-        ...(input.detail ? { detail: input.detail } : {}),
-        previousState,
-        requiresRedispatch: redispatch,
-        secondsSinceCreation,
-      },
-      correlationId
-    );
+    this.publisher.publish(event);
 
     return updated;
     });

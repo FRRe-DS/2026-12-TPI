@@ -70,6 +70,33 @@ export type AnyDomainEvent =
   | EventEnvelope<"TripCompleted", TripCompletedPayload>
   | EventEnvelope<"TripCancelled", TripCancelledPayload>;
 
+  /** Qué payload corresponde a cada evento: así TypeScript rechaza un evento incompleto. */
+export interface DomainEventPayloads {
+  TripCreated: TripCreatedPayload;
+  DriverArrived: TripStatusPayload;
+  TripStarted: TripStatusPayload;
+  TripCompleted: TripCompletedPayload;
+  TripCancelled: TripCancelledPayload;
+}
+
+/** Arma el sobre `EventEnvelope` de un evento. No lo guarda ni lo envía. */
+export function createDomainEvent<T extends DomainEventType>(
+  eventType: T,
+  tripId: string,
+  payload: DomainEventPayloads[T],
+  correlationId?: string
+): EventEnvelope<T, DomainEventPayloads[T]> {
+  return {
+    eventId: crypto.randomUUID(),
+    eventType,
+    eventVersion: 1,
+    occurredAt: new Date().toISOString(),
+    tripId,
+    ...(correlationId ? { correlationId } : {}),
+    payload,
+  };
+}
+
 /** Arma el payload de TripCreated a partir del viaje recién creado. Las direcciones se omiten si no hay. */
 export function buildTripCreatedPayload(
   trip: Pick<
@@ -125,34 +152,20 @@ export function buildTripCompletedPayload(input: {
 
 /**
  * CAPA DE SERVICIO DE MENSAJERÍA / EVENTOS DE DOMINIO (RNF-03 / RNF-10)
- * Construye y publica los eventos asíncronos siguiendo el esquema `EventEnvelope` de `openapi.yaml`.
+ * Lleva el historial en memoria (panel de demo y tests) de los eventos ya confirmados.
+ * La copia durable, la que se envía a RabbitMQ, la guarda el repository en la tabla outbox.
  */
 export class EventPublisherService {
   private readonly history: AnyDomainEvent[] = [];
 
-  publish<T extends DomainEventType, P>(
-    eventType: T,
-    tripId: string,
-    payload: P,
-    correlationId?: string
-  ): EventEnvelope<T, P> {
-    const event: EventEnvelope<T, P> = {
-      eventId: crypto.randomUUID(),
-      eventType,
-      eventVersion: 1,
-      occurredAt: new Date().toISOString(),
-      tripId,
-      ...(correlationId ? { correlationId } : {}),
-      payload,
-    };
-
-    this.history.unshift(event as AnyDomainEvent);
+  /** Se llama DESPUÉS de que la transacción se confirmó, nunca antes. */
+  publish(event: AnyDomainEvent): void {
+    this.history.unshift(event);
     if (this.history.length > 100) {
       this.history.pop();
     }
 
-    console.log(`[EVENT EMITTED -> ${eventType}] tripId=${tripId} eventId=${event.eventId}`);
-    return event;
+    console.log(`[EVENT EMITTED -> ${event.eventType}] tripId=${event.tripId} eventId=${event.eventId}`);
   }
 
   getPublishedEvents(): AnyDomainEvent[] {
