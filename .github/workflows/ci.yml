@@ -7,7 +7,9 @@ on:
       - m6/base-de-datos
     paths:
       - "backend/**"
+      - "frontend/**"
       - "openapi.yaml"
+      - ".dockerignore"
       - ".github/workflows/ci.yml"
   pull_request:
     branches:
@@ -84,6 +86,75 @@ jobs:
           name: g12-vitest-reports
           path: backend/reports/*.xml
           if-no-files-found: warn
+
+  imagen:
+    name: Imagen Docker (GHCR)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: [calidad-y-tests, sast]
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Descargar el código
+        uses: actions/checkout@v5
+
+      - name: Construir la imagen
+        run: |
+          VERSION=$(node -p "require('./backend/package.json').version")
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          docker build -f backend/Dockerfile -t m6-viajes-g12:ci .
+
+      - name: Probar arranque con PostgreSQL
+        run: |
+          set -euo pipefail
+          RED="m6-ci-${GITHUB_RUN_ID}"
+          cleanup() {
+            docker rm -f "${RED}-api" "${RED}-db" >/dev/null 2>&1 || true
+            docker network rm "$RED" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          docker network create "$RED"
+          docker run -d --name "${RED}-db" --network "$RED" \
+            -e POSTGRES_USER=m6user \
+            -e POSTGRES_PASSWORD=m6password \
+            -e POSTGRES_DB=m6_trips \
+            postgres:16-alpine
+          for i in $(seq 1 30); do
+            if docker exec "${RED}-db" pg_isready -U m6user -d m6_trips >/dev/null 2>&1; then
+              break
+            fi
+            sleep 1
+          done
+          docker exec "${RED}-db" pg_isready -U m6user -d m6_trips
+          docker run -d --name "${RED}-api" --network "$RED" -p 3006:3006 \
+            -e DATABASE_URL="postgresql://m6user:m6password@${RED}-db:5432/m6_trips?schema=public" \
+            -e ENABLE_DEMO_AUTH=true \
+            m6-viajes-g12:ci
+          for i in $(seq 1 60); do
+            if curl -fsS http://localhost:3006/health/details >/dev/null 2>&1; then
+              echo "health/details respondio 200"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "La imagen no respondio /health/details en 60 s"
+          docker logs "${RED}-api"
+          exit 1
+
+      # Publica solo desde la rama base: los PR construyen la imagen pero no la suben.
+      - name: Publicar en GHCR
+        if: github.event_name == 'push' && github.ref == 'refs/heads/m6/base-de-datos'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          IMAGEN="ghcr.io/$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')/m6-viajes-g12"
+          echo "$GH_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          for TAG in "$VERSION" "sha-${GITHUB_SHA::7}" latest; do
+            docker tag m6-viajes-g12:ci "$IMAGEN:$TAG"
+            docker push "$IMAGEN:$TAG"
+          done
 
   sast:
     name: Análisis estático SAST (Semgrep)
