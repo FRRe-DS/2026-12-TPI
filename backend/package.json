@@ -4,10 +4,10 @@
   "description": "Modulo M6 Backend - Viajes y Ciclo de Vida",
   "main": "index.js",
   "scripts": {
-    "dev": "tsx src/explorer.ts",
-    "start": "tsx src/explorer.ts",
-    "ui": "tsx src/explorer.ts",
-    "explorer": "prisma db push && prisma generate && tsx src/explorer.ts",
+    "dev": "tsx src/main.ts",
+    "start": "tsx src/main.ts",
+    "ui": "tsx src/main.ts",
+    "explorer": "prisma db push && prisma generate && tsx src/main.ts",
     "test": "vitest run",
     "test:integration": "vitest run --config vitest.integration.config.ts"
   },
@@ -24,7 +24,21 @@
   },
   "homepage": "https://github.com/FRRe-DS/2026-12-tpi#readme",
   "dependencies": {
-    "@prisma/client": "^6.19.3"
+    "@opentelemetry/api": "1.10.0",
+    "@opentelemetry/core": "3.1.1",
+    "@opentelemetry/exporter-logs-otlp-http": "0.301.2",
+    "@opentelemetry/exporter-metrics-otlp-http": "0.301.2",
+    "@opentelemetry/exporter-trace-otlp-http": "0.301.2",
+    "@opentelemetry/host-metrics": "0.40.0",
+    "@opentelemetry/instrumentation-http": "0.301.2",
+    "@opentelemetry/instrumentation-runtime-node": "0.38.0",
+    "@opentelemetry/instrumentation-undici": "0.35.1",
+    "@opentelemetry/sdk-logs": "3.1.1",
+    "@opentelemetry/sdk-metrics": "3.1.1",
+    "@opentelemetry/sdk-node": "0.301.2",
+    "@opentelemetry/sdk-trace": "3.1.1",
+    "@prisma/client": "^6.19.3",
+    "@prisma/instrumentation": "6.19.3"
   },
   "devDependencies": {
     "@types/node": "^26.6.5",
