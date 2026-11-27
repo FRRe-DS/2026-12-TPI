@@ -1,0 +1,251 @@
+# Pruebas de carga con k6 para M6 (Grupo 12).
+# Especificación cerrada en k6/PROPUESTA.md.
+# Disparador único: workflow_dispatch (no se ejecuta en push ni pull_request).
+name: M6 Viajes (G12) - Pruebas de carga (k6)
+
+on:
+  workflow_dispatch:
+    inputs:
+      modo:
+        description: "Modo de corrida (smoke, serie, limites, individual)"
+        required: true
+        default: "smoke"
+        type: choice
+        options:
+          - smoke
+          - serie
+          - limites
+          - individual
+      vus:
+        description: "Usuarios virtuales (solo aplica en modo individual)"
+        required: false
+        default: "50"
+        type: choice
+        options:
+          - "50"
+          - "100"
+          - "500"
+          - "1000"
+      rampa:
+        description: "Duración de la rampa (solo aplica en modo individual)"
+        required: false
+        default: "1m"
+        type: string
+      duracion:
+        description: "Duración en régimen (solo aplica en modo individual)"
+        required: false
+        default: "3m"
+        type: string
+      lecturas:
+        description: "Porcentaje de lecturas GET sobre viajes completados (0-100)"
+        required: false
+        default: "20"
+        type: string
+
+# Una sola corrida de carga a la vez sobre el servicio, sin cancelar una corrida en curso.
+concurrency:
+  group: k6-g12-load-test
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  k6:
+    name: k6 (${{ inputs.modo }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Descargar el código
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Validar secret y entradas
+        env:
+          K6_BASE_URL: ${{ secrets.K6_BASE_URL }}
+          INPUT_MODO: ${{ inputs.modo }}
+          INPUT_RAMPA: ${{ inputs.rampa }}
+          INPUT_DURACION: ${{ inputs.duracion }}
+          INPUT_LECTURAS: ${{ inputs.lecturas }}
+        run: |
+          set -euo pipefail
+          ERRORES=0
+
+          if [ -z "${K6_BASE_URL}" ]; then
+            echo "::error::Falta el secret K6_BASE_URL. Configuralo en Settings > Secrets and variables > Actions."
+            ERRORES=1
+          fi
+
+          if ! [[ "${INPUT_LECTURAS}" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+            echo "::error::La entrada 'lecturas' debe ser un número entre 0 y 100. Recibido: '${INPUT_LECTURAS}'."
+            ERRORES=1
+          fi
+
+          if [ "${INPUT_MODO}" = "individual" ] && { [ -z "${INPUT_RAMPA}" ] || [ -z "${INPUT_DURACION}" ]; }; then
+            echo "::error::En modo 'individual', las entradas 'rampa' y 'duracion' no pueden estar vacías."
+            ERRORES=1
+          fi
+
+          if [ "${ERRORES}" -ne 0 ]; then
+            exit 1
+          fi
+
+          echo "Secret y entradas validados correctamente (modo=${INPUT_MODO}, lecturas=${INPUT_LECTURAS}%)."
+          echo "Nota: el servidor de prueba debe tener ENABLE_DEMO_AUTH=true (solo durante la prueba, nunca en producción)."
+
+      - name: Verificar salud del servicio (/health)
+        env:
+          K6_BASE_URL: ${{ secrets.K6_BASE_URL }}
+        run: |
+          set -euo pipefail
+          BASE_URL="${K6_BASE_URL%/}"
+          if ! curl -fsS --max-time 15 "${BASE_URL}/health" >/dev/null; then
+            echo "::error::El servicio no respondió 200 en /health. Verificá que esté desplegado y accesible."
+            exit 1
+          fi
+          echo "GET /health respondió correctamente."
+
+      - name: Ejecutar pruebas de carga con k6
+        env:
+          K6_BASE_URL: ${{ secrets.K6_BASE_URL }}
+          INPUT_MODO: ${{ inputs.modo }}
+          INPUT_VUS: ${{ inputs.vus }}
+          INPUT_RAMPA: ${{ inputs.rampa }}
+          INPUT_DURACION: ${{ inputs.duracion }}
+          INPUT_LECTURAS: ${{ inputs.lecturas }}
+          # --- Prometheus remote write (desactivado en esta etapa, sección 7.4 de k6/PROPUESTA.md) ---
+          # K6_PROMETHEUS_RW_SERVER_URL: ${{ secrets.K6_PROMETHEUS_RW_SERVER_URL }}
+          # K6_PROMETHEUS_RW_TREND_STATS: "p(50),p(95),p(99),avg,max"
+        run: |
+          set -euo pipefail
+          IMAGEN_K6="grafana/k6:0.54.0"
+          BASE_URL="${K6_BASE_URL%/}"
+          RESULTADOS_DIR="${GITHUB_WORKSPACE}/k6/resultados"
+          mkdir -p "${RESULTADOS_DIR}"
+
+          docker pull "${IMAGEN_K6}"
+
+          ejecutar_nivel() {
+            local modo="$1"
+            local vus="$2"
+            local rampa="$3"
+            local duracion="$4"
+
+            local timestamp
+            timestamp="$(date -u +%Y%m%d-%H%M%S)"
+            local test_id="g12-${modo}-${vus}vu-${timestamp}"
+            local json_file="resumen-${test_id}.json"
+            local log_file="${RESULTADOS_DIR}/salida-${test_id}.txt"
+
+            {
+              echo "========================================================================"
+              echo "k6 G12 | modo=${modo} | vus=${vus} | rampa=${rampa} | regimen=${duracion} | bajada=20s | lecturas=${INPUT_LECTURAS}%"
+              echo "testid=${test_id} | runner=$(nproc) vCPU | load_inicio=$(uptime)"
+              echo "========================================================================"
+            } | tee "${log_file}"
+
+            local docker_env_args=(
+              -e "BASE_URL=${BASE_URL}"
+              -e "MODO=${modo}"
+              -e "VUS=${vus}"
+              -e "RAMPA=${rampa}"
+              -e "DURACION=${duracion}"
+              -e "BAJADA=20s"
+              -e "LECTURAS=${INPUT_LECTURAS}"
+              -e "TEST_ID=${test_id}"
+            )
+            # --- Prometheus remote write (comentado) ---
+            # docker_env_args+=(-e K6_PROMETHEUS_RW_SERVER_URL -e K6_PROMETHEUS_RW_TREND_STATS)
+
+            local rc=0
+            docker run --rm --user "$(id -u):$(id -g)" \
+              -v "${GITHUB_WORKSPACE}/k6/escenarios:/escenarios:ro" \
+              -v "${RESULTADOS_DIR}:/resultados" \
+              "${docker_env_args[@]}" \
+              "${IMAGEN_K6}" run \
+                --tag "testid=${test_id}" \
+                --tag "grupo=12" \
+                --tag "vus=${vus}" \
+                --tag "modo=${modo}" \
+                --summary-export="/resultados/${json_file}" \
+                /escenarios/ciclo-de-viaje.js 2>&1 | tee -a "${log_file}" || rc=$?
+                # Para activar Prometheus remote write, agregar antes de /escenarios/ciclo-de-viaje.js:
+                #   -o experimental-prometheus-rw \
+
+            echo "load_fin=$(uptime) | exit_code=${rc}" | tee -a "${log_file}"
+            return "${rc}"
+          }
+
+          case "${INPUT_MODO}" in
+            smoke)
+              ejecutar_nivel "smoke" 2 "10s" "20s"
+              ;;
+            limites)
+              ejecutar_nivel "limites" 500 "1m" "3m"
+              ;;
+            individual)
+              ejecutar_nivel "individual" "${INPUT_VUS}" "${INPUT_RAMPA}" "${INPUT_DURACION}"
+              ;;
+            serie)
+              NIVELES=(50 100 500 1000)
+              FALLO_SERIE=0
+              for idx in "${!NIVELES[@]}"; do
+                vus="${NIVELES[$idx]}"
+                rc=0
+                ejecutar_nivel "serie" "${vus}" "1m" "3m" || rc=$?
+                if [ "${rc}" -ne 0 ]; then
+                  echo "::warning::El nivel ${vus} VUs finalizó con código ${rc} (umbrales no cumplidos o error)."
+                  FALLO_SERIE="${rc}"
+                fi
+                if [ "${idx}" -lt $((${#NIVELES[@]} - 1)) ]; then
+                  echo "Enfriamiento de 30s antes del siguiente nivel..."
+                  sleep 30
+                fi
+              done
+              exit "${FALLO_SERIE}"
+              ;;
+          esac
+
+      - name: Publicar resumen en Step Summary
+        if: always()
+        run: |
+          node -e '
+            const fs = require("node:fs");
+            const path = require("node:path");
+            const dir = path.join(process.env.GITHUB_WORKSPACE, "k6", "resultados");
+            if (!fs.existsSync(dir)) process.exit(0);
+            const files = fs.readdirSync(dir).filter((f) => f.startsWith("resumen-") && f.endsWith(".json")).sort();
+            if (files.length === 0) process.exit(0);
+
+            const fmt = (v, dec = 1) => (typeof v === "number" && Number.isFinite(v) ? v.toFixed(dec) : "-");
+            const lines = [
+              "### Resumen de pruebas de carga k6 — M6 · Grupo 12",
+              "",
+              "| Corrida (`testid`) | p50 (ms) | p95 (ms) | p99 (ms) | req/s | % errores | 429 | 5xx | Completados | Cancelados | Lecturas | Dropped iters |",
+              "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
+            ];
+
+            for (const f of files) {
+              const data = JSON.parse(fs.readFileSync(path.join(dir, f), "utf8"));
+              const m = data.metrics || {};
+              const dur = m.http_req_duration || {};
+              const reqs = m.http_reqs || {};
+              const failed = m.http_req_failed || {};
+              const testid = f.replace(/^resumen-/, "").replace(/\.json$/, "");
+              const errPct = typeof failed.value === "number" ? failed.value * 100 : null;
+              lines.push(
+                `| \`${testid}\` | ${fmt(dur.med)} | ${fmt(dur["p(95)"])} | ${fmt(dur["p(99)"])} | ${fmt(reqs.rate, 2)} | ${fmt(errPct, 2)}% | ${(m.m6_http_429 || {}).count ?? 0} | ${(m.m6_http_5xx || {}).count ?? 0} | ${(m.m6_viajes_completados || {}).count ?? 0} | ${(m.m6_viajes_cancelados || {}).count ?? 0} | ${(m.m6_lecturas || {}).count ?? 0} | ${(m.dropped_iterations || {}).count ?? 0} |`
+              );
+            }
+            fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, lines.join("\n") + "\n");
+          '
+
+      - name: Subir evidencia (JSON y logs)
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: k6-${{ inputs.modo }}-${{ github.run_id }}
+          path: k6/resultados/
+          if-no-files-found: warn

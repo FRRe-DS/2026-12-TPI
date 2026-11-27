@@ -9,3 +9,4 @@ node_modules/
 backend/generated/prisma
 dist/
 **/dist/
+k6/resultados/
