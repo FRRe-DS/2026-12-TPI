@@ -12,10 +12,6 @@ on:
   pull_request:
     branches:
       - m6/base-de-datos
-    paths:
-      - "backend/**"
-      - "openapi.yaml"
-      - ".github/workflows/ci.yml"
   workflow_dispatch:
 
 concurrency:
@@ -101,6 +97,15 @@ jobs:
       - name: Descargar el código
         uses: actions/checkout@v5
 
+      - name: Instalar Node.js 22 para evaluar SARIF
+        uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          package-manager-cache: false
+
+      - name: Probar el criterio de severidad
+        run: node --test backend/scripts/semgrep-quality-gate.test.mjs
+
       - name: Ejecutar Semgrep (OWASP Top 10, TypeScript, Node.js, Secrets)
         run: |
           mkdir -p reports
@@ -129,3 +134,6 @@ jobs:
         with:
           sarif_file: reports/semgrep-g12.sarif
           category: semgrep-g12
+
+      - name: Evaluar Quality Gate de Semgrep
+        run: node backend/scripts/semgrep-quality-gate.mjs reports/semgrep-g12.sarif
