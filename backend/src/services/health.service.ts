@@ -1,3 +1,5 @@
+import type { OutboxStats } from "../repositories/outbox.repository.js";
+
 /** Estado de un componente (schema `ComponentStatus` del contrato). */
 export interface ComponentStatus {
   status: "OK" | "ERROR" | "NOT_CONFIGURED";
@@ -15,11 +17,21 @@ export interface HealthReport {
     rabbitmq: ComponentStatus;
     redis: ComponentStatus;
   };
-  outbox: { pending: number; oldestPendingSeconds: number } | null;
+  outbox: OutboxStats | null;
+}
+
+/** Lo necesario para informar sobre RabbitMQ y la outbox. */
+export interface MessagingChecks {
+  /** Falla si el broker no responde. No se define si no hay RABBITMQ_URL. */
+  checkBroker?: () => Promise<unknown>;
+  outboxStats?: () => Promise<OutboxStats>;
 }
 
 /** Plazo máximo de cada verificación (RNF-14): 1,5 s. */
 const CHECK_TIMEOUT_MS = 1500;
+
+/** Si un evento espera envío más que esto, el servicio queda DEGRADED. */
+const MAX_PENDING_SECONDS = 60;
 
 /** Momento en que arrancó el proceso. */
 const UP_SINCE = new Date(Date.now() - process.uptime() * 1000).toISOString();
@@ -43,13 +55,14 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
 }
 
 /**
- * Readiness y diagnóstico de dependencias (RNF-14). Hoy solo PostgreSQL es real;
- * RabbitMQ y Redis figuran como NOT_CONFIGURED y la bandeja de salida (outbox) como null.
+ * Readiness y diagnóstico de dependencias (RNF-14): PostgreSQL, RabbitMQ y la bandeja
+ * de salida (outbox). Redis todavía no se usa y figura como NOT_CONFIGURED.
  */
 export class HealthService {
   constructor(
     private readonly checkDatabase: () => Promise<unknown>,
-    private readonly timeoutMs: number = CHECK_TIMEOUT_MS
+    private readonly timeoutMs: number = CHECK_TIMEOUT_MS,
+    private readonly messaging: MessagingChecks = {}
   ) {}
 
   private async checkPostgres(): Promise<ComponentStatus> {
@@ -69,20 +82,51 @@ export class HealthService {
     }
   }
 
+  private async checkRabbitMq(): Promise<ComponentStatus> {
+    const checkBroker = this.messaging.checkBroker;
+    if (!checkBroker) return { status: "NOT_CONFIGURED" };
+
+    const started = Date.now();
+    try {
+      await withTimeout(checkBroker(), this.timeoutMs);
+      return { status: "OK", latencyMs: Date.now() - started };
+    } catch (err) {
+      console.error("[HEALTH] RabbitMQ no responde:", err instanceof Error ? err.message : err);
+      return { status: "ERROR", latencyMs: Date.now() - started };
+    }
+  }
+
+  /** Devuelve null si no se pudo consultar. */
+  private async checkOutbox(): Promise<OutboxStats | null> {
+    const outboxStats = this.messaging.outboxStats;
+    if (!outboxStats) return null;
+
+    try {
+      return await withTimeout(outboxStats(), this.timeoutMs);
+    } catch (err) {
+      console.error("[HEALTH] No se pudo consultar la outbox:", err instanceof Error ? err.message : err);
+      return null;
+    }
+  }
+
   async getDetails(): Promise<{ statusCode: 200 | 503; report: HealthReport }> {
-    const postgres = await this.checkPostgres();
+    const [postgres, rabbitmq] = await Promise.all([this.checkPostgres(), this.checkRabbitMq()]);
     const databaseUp = postgres.status === "OK";
+    const outbox = databaseUp ? await this.checkOutbox() : null;
+
+    const delayed = outbox !== null && outbox.oldestPendingSeconds > MAX_PENDING_SECONDS;
+    const degraded = rabbitmq.status === "ERROR" || delayed;
 
     const report: HealthReport = {
-      status: databaseUp ? "OK" : "ERROR",
+      status: !databaseUp ? "ERROR" : degraded ? "DEGRADED" : "OK",
       version: process.env.APP_VERSION ?? process.env.npm_package_version ?? "1.0.0",
       upSince: UP_SINCE,
       components: {
         postgres,
-        rabbitmq: { status: "NOT_CONFIGURED" },
+        rabbitmq,
         redis: { status: "NOT_CONFIGURED" },
       },
-      outbox: null,
+      outbox,
     };
 
     return { statusCode: databaseUp ? 200 : 503, report };

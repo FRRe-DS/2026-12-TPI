@@ -20,11 +20,23 @@ import { TripController } from "../controllers/trip.controller.js";
 export const tripRepository = new TripRepository(prisma);
 export const tripService = new TripService(tripRepository, eventPublisher, m8QrValidator);
 export const idempotencyService = new IdempotencyService(new IdempotencyRepository(prisma));
-export const healthService = new HealthService(() => tripRepository.checkDatabaseHealth());
 export const tripController = new TripController(tripService, idempotencyService);
 
-/** Envío de eventos a RabbitMQ (RNF-10). Es null si no hay RABBITMQ_URL; lo arranca el servidor. */
+/** Envío de eventos a RabbitMQ (RNF-10). Sin RABBITMQ_URL no hay publicador ni despachador. */
 const messagingConfig = loadMessagingConfig();
-export const outboxDispatcher = messagingConfig
-  ? new OutboxDispatcher(new OutboxRepository(prisma), new RabbitMqPublisher(messagingConfig))
+const outboxRepository = new OutboxRepository(prisma);
+const rabbitPublisher = messagingConfig ? new RabbitMqPublisher(messagingConfig) : null;
+
+/** Lo arranca el servidor. */
+export const outboxDispatcher = rabbitPublisher
+  ? new OutboxDispatcher(outboxRepository, rabbitPublisher)
   : null;
+
+export const healthService = new HealthService(
+  () => tripRepository.checkDatabaseHealth(),
+  undefined, // se usa el plazo por defecto (1,5 s)
+  {
+    checkBroker: rabbitPublisher ? () => rabbitPublisher.checkConnection() : undefined,
+    outboxStats: () => outboxRepository.pendingStats(),
+  }
+);

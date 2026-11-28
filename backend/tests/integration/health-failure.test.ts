@@ -1,10 +1,11 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi, type MockInstance } from "vitest";
 import { tripRepository } from "../../src/config/services.js";
-import { startServer, stopServer, api } from "./helpers.js";
+import { startServer, stopServer, resetDatabase, api } from "./helpers.js";
 
 describe("/health/details con falla de PostgreSQL simulada: 503 (integracion)", () => {
   beforeAll(startServer);
   afterAll(stopServer);
+  beforeEach(resetDatabase);
 
   let errorLog: MockInstance<typeof console.error>;
 

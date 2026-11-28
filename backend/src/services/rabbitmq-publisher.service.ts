@@ -17,14 +17,24 @@ const TIMEOUT_MS = 5000;
 export class RabbitMqPublisher implements EventTransport {
   private connection: ChannelModel | null = null;
   private channel: ConfirmChannel | null = null;
+  private opening: Promise<ConfirmChannel> | null = null;
 
   constructor(
     private readonly config: MessagingConfig,
     private readonly timeoutMs: number = TIMEOUT_MS
   ) {}
 
-  private async openChannel(): Promise<ConfirmChannel> {
-    if (this.channel) return this.channel;
+  private openChannel(): Promise<ConfirmChannel> {
+    if (this.channel) return Promise.resolve(this.channel);
+
+    // Si ya se está conectando, se espera ese mismo intento: así nunca se abren dos conexiones.
+    this.opening ??= this.connect().finally(() => {
+      this.opening = null;
+    });
+    return this.opening;
+  }
+
+  private async connect(): Promise<ConfirmChannel> {
 
     const connection = await amqp.connect(this.config.url, { timeout: this.timeoutMs });
     this.connection = connection;
@@ -80,6 +90,12 @@ export class RabbitMqPublisher implements EventTransport {
         }
       );
     });
+  }
+
+  /** Falla si el broker no responde (lo usa /health/details, RNF-14). */
+  async checkConnection(): Promise<void> {
+    const channel = await this.openChannel();
+    await channel.checkExchange(this.config.exchange);
   }
 
   async close(): Promise<void> {

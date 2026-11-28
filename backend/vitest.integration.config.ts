@@ -35,6 +35,8 @@ export default defineConfig({
       DATABASE_URL: testDatabaseUrl,
       ENABLE_DEMO_AUTH: "true",
       NODE_ENV: "test",
+      // Sin broker: así el resultado no depende del backend/.env de cada uno.
+      RABBITMQ_URL: "",
     },
   },
 });
