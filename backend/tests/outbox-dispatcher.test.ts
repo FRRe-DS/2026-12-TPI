@@ -62,6 +62,15 @@ describe("Despachador de la outbox (unitario)", () => {
     expect(sent).toBe(2);
   });
 
+  it("si el error llega sin mensaje, anota su codigo", async () => {
+    const error = Object.assign(new AggregateError([], ""), { code: "ECONNREFUSED" });
+    transport.publish.mockRejectedValue(error);
+
+    await new OutboxDispatcher(outbox, transport).dispatchPending();
+
+    expect(outbox.markFailed).toHaveBeenCalledWith(1, "ECONNREFUSED");
+  });
+
   it("sin RABBITMQ_URL no hay configuracion; con ella usa el exchange m6.events", () => {
     expect(loadMessagingConfig({})).toBeUndefined();
     expect(loadMessagingConfig({ RABBITMQ_URL: "  " })).toBeUndefined();

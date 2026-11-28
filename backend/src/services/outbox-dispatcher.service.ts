@@ -8,6 +8,13 @@ const BATCH_SIZE = 50;
 
 type PendingEvents = Pick<OutboxRepository, "findPending" | "markPublished" | "markFailed">;
 
+/** Texto de un error para guardar y mostrar. Algunos errores de conexión llegan sin mensaje. */
+function describeError(err: unknown): string {
+  if (!(err instanceof Error)) return String(err);
+  const { code } = err as NodeJS.ErrnoException;
+  return err.message || code || err.name;
+}
+
 /**
  * Despachador de la outbox (RNF-10): cada pocos segundos envía los eventos pendientes, en orden.
  * Entrega "al menos una vez": un evento puede repetirse, y los consumidores deduplican por `eventId`.
@@ -38,7 +45,7 @@ export class OutboxDispatcher {
       try {
         await this.transport.publish(ROUTING_KEYS[event.eventType], event);
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
+        const message = describeError(err);
         await this.outbox.markFailed(row.id, message);
         this.reportFailure(message);
         return sent;
@@ -77,7 +84,7 @@ export class OutboxDispatcher {
     try {
       await this.dispatchPending();
     } catch (err) {
-      this.reportFailure(err instanceof Error ? err.message : String(err));
+      this.reportFailure(describeError(err));
     }
     if (this.running) {
       this.timer = setTimeout(() => void this.tick(), this.intervalMs);

@@ -46,6 +46,18 @@ jobs:
           --health-interval 2s
           --health-timeout 3s
           --health-retries 30
+      rabbitmq:
+        image: rabbitmq:4-management-alpine
+        env:
+          RABBITMQ_DEFAULT_USER: m6
+          RABBITMQ_DEFAULT_PASS: m6_dev
+        ports:
+          - 5672:5672
+        options: >-
+          --health-cmd "rabbitmq-diagnostics -q check_port_connectivity"
+          --health-interval 10s
+          --health-timeout 10s
+          --health-retries 10
 
     steps:
       - name: Descargar el código
@@ -78,6 +90,7 @@ jobs:
           DATABASE_URL: postgresql://m6user:m6password@localhost:5432/m6_trips?schema=public
           TEST_DATABASE_URL: postgresql://m6user:m6password@localhost:5432/m6_trips_test?schema=public
           M8_API_URL: ""
+          TEST_RABBITMQ_URL: amqp://m6:m6_dev@localhost:5672
 
       - name: Guardar reportes de tests como artefacto
         if: always()
