@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
-import { startServer, stopServer, resetDatabase, api, tokens } from "./helpers.js";
+import { prisma } from "../../src/config/database.js";
+import { startServer, stopServer, resetDatabase, api, tokens, createTrip } from "./helpers.js";
 
 describe("Health y autenticacion (integracion)", () => {
   beforeAll(startServer);
@@ -19,7 +20,31 @@ describe("Health y autenticacion (integracion)", () => {
     expect(res.body.components.postgres.status).toBe("OK");
     expect(res.body.components.rabbitmq.status).toBe("NOT_CONFIGURED");
     expect(res.body.components.redis.status).toBe("NOT_CONFIGURED");
-    expect(res.body.outbox).toBeNull();
+    expect(res.body.outbox).toEqual({ pending: 0, oldestPendingSeconds: 0 });
+  });
+
+  it("GET /health/details cuenta los pendientes y degrada si esperan mas de 60 s", async () => {
+    await createTrip();
+    const recent = await api("GET", "/health/details");
+    expect(recent.body.status).toBe("OK");
+    expect(recent.body.outbox.pending).toBe(1);
+
+    // Se envejece el evento para no tener que esperar un minuto de verdad.
+    await prisma.outboxEvent.updateMany({ data: { createdAt: new Date(Date.now() - 120_000) } });
+    const delayed = await api("GET", "/health/details");
+
+    expect(delayed.status).toBe(200);
+    expect(delayed.body.status).toBe("DEGRADED");
+    expect(delayed.body.outbox.oldestPendingSeconds).toBeGreaterThanOrEqual(120);
+  });
+
+  it("GET /health/details no cuenta como pendientes los eventos ya enviados", async () => {
+    await createTrip();
+    await prisma.outboxEvent.updateMany({ data: { publishedAt: new Date() } });
+
+    const res = await api("GET", "/health/details");
+
+    expect(res.body.outbox).toEqual({ pending: 0, oldestPendingSeconds: 0 });
   });
 
   it("GET /health/details no expone la cadena de conexion", async () => {

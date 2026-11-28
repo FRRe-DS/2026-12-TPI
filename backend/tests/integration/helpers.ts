@@ -33,7 +33,7 @@ export async function resetDatabase(): Promise<void> {
     throw new Error(`Abortado: la base conectada es "${db}" y no es una base de tests.`);
   }
   await prisma.$executeRawUnsafe(
-    "TRUNCATE TABLE trip_event_history, trips, idempotency_keys RESTART IDENTITY CASCADE"
+    "TRUNCATE TABLE trip_event_history, trips, idempotency_keys, outbox_events RESTART IDENTITY CASCADE"
   );
   resetRateLimits();
 }

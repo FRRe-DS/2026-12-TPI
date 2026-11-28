@@ -36,7 +36,8 @@ El contrato de la API (`openapi.yaml`) está **unificado con el Grupo 5**, que t
 * **Lenguaje:** **TypeScript (Node.js)** — Aporta tipado estático fuerte sobre el ecosistema JavaScript, previniendo errores en tiempo de compilación al manipular contratos, estados del viaje y payloads. El servidor usa el módulo `http` nativo de Node, sin framework.
 * **Base de Datos:** **PostgreSQL** — Motor relacional con soporte transaccional ACID completo, ideal para garantizar integridad referencial, manejo nativo de JSON y control de concurrencia (RNF-08).
 * **ORM:** **Prisma ORM (v6.19)** — Definición declarativa del esquema (`backend/prisma/schema.prisma`), migraciones SQL versionadas (`backend/prisma/migrations`) y cliente tipado autogenerado en `backend/generated/prisma`.
-* **Contenedores:** **Docker Compose** — Entorno reproducible mediante imágenes OCI para la instancia de PostgreSQL (RNF-04).
+* **Contenedores:** **Docker Compose** — Entorno reproducible mediante imágenes OCI para PostgreSQL, RabbitMQ, Keycloak y el backend (RNF-04).
+* **Mensajería:** **RabbitMQ** (cliente `amqplib`) — Publica los eventos de dominio de forma asíncrona, para que M6 no dependa de que los consumidores estén disponibles (RNF-10).
 * **Contratos:** **OpenAPI 3.1.0** — Definición estandarizada de la interfaz REST del módulo, sus respuestas de error y los esquemas de eventos (RNF-03).
 * **Tests:** **Vitest** — Tests unitarios de la lógica de dominio y de los componentes transversales (`npm test`) y tests de integración que ejercitan los endpoints reales contra una base PostgreSQL de pruebas (`npm run test:integration`).
 
@@ -81,7 +82,7 @@ El estado destino es siempre `CANCELLED`. Quién canceló, el motivo y si hay qu
 
 Cumpliendo con el principio de **propiedad de datos**, el Módulo M6 administra su propia base de datos **PostgreSQL** de forma autónoma mediante **Prisma ORM**. No se almacenan datos internos de perfiles ni tarifas, referenciando a otros dominios únicamente por sus identificadores.
 
-Existe una relación de **uno a muchos (`1:N`)** entre la cabecera del viaje y su historial de eventos. Además hay una tabla auxiliar para las claves de idempotencia.
+Existe una relación de **uno a muchos (`1:N`)** entre la cabecera del viaje y su historial de eventos. Además hay dos tablas auxiliares: las claves de idempotencia y la bandeja de salida de eventos.
 
 ### 1. Tabla `Trip` (Cabecera del viaje)
 Almacena el estado vigente y los datos principales del viaje.
@@ -144,7 +145,22 @@ Registro de las claves `Idempotency-Key` recibidas, para devolver la misma respu
 | `responseStatus` / `responseBody` / `responseEtag` | `Int` / `JSONB` / `String` | Nullable | Respuesta exitosa guardada. Mientras son nulos, el pedido original sigue en proceso. |
 | `createdAt` / `expiresAt` | `DateTime` | No nulo | La clave se recuerda 24 horas. |
 
-### 4. Enumeraciones (PostgreSQL `ENUM`)
+### 4. Tabla `OutboxEvent` (`outbox_events`)
+Bandeja de salida: eventos de dominio guardados junto con el cambio del viaje, a la espera de enviarse a RabbitMQ (RNF-10).
+
+| Campo | Tipo | Restricciones | Descripción |
+| :--- | :--- | :--- | :--- |
+| `id` | `Int` | `PK`, autoincremental | Define el orden de envío. |
+| `eventId` | `UUID` | **`UNIQUE`**, No nulo | Identificador del evento. |
+| `eventType` / `tripId` | `String` / `UUID` | No nulo | Tipo de evento y viaje afectado. |
+| `envelope` | `JSONB` | No nulo | Sobre completo (`EventEnvelope`) tal como se envía. |
+| `createdAt` | `DateTime` | No nulo (Default: `now()`) | Cuándo se guardó. |
+| `publishedAt` | `DateTime` | Nullable | Cuándo confirmó el broker. Nulo mientras está pendiente. |
+| `attempts` / `lastError` | `Int` / `String` | Default `0` / Nullable | Intentos de envío y motivo del último fallo. |
+
+Índice: (`publishedAt`, `id`).
+
+### 5. Enumeraciones (PostgreSQL `ENUM`)
 | Enum | Valores | Uso |
 | :--- | :--- | :--- |
 | `TripState` | `PENDING_ARRIVAL`, `DRIVER_ARRIVED`, `IN_PROGRESS`, `COMPLETED`, `CANCELLED` | Estado del viaje (`Trip.state`, `TripEventHistory.state` y `fromState`). |
@@ -212,14 +228,20 @@ tiene que pedir un token de servicio al Keycloak acordado (`client_credentials` 
 `grupo-NN`) y enviarlo como `Bearer`.
 
 ### Health checks (RNF-14)
-`GET /health/details` verifica PostgreSQL con un timeout de 1,5 s y devuelve un `HealthReport`:
+`GET /health/details` verifica PostgreSQL y RabbitMQ, con un timeout de 1,5 s cada uno, revisa la bandeja de salida de eventos (outbox) y devuelve un `HealthReport`:
 
 | Situación | HTTP | `status` |
 | :--- | :--- | :--- |
-| PostgreSQL responde | `200` | `OK` |
+| Todo responde y no hay eventos atrasados | `200` | `OK` |
+| RabbitMQ está configurado y no responde | `200` | `DEGRADED` |
+| Hay eventos esperando envío hace más de 60 s | `200` | `DEGRADED` |
 | PostgreSQL no responde o supera el timeout | `503` | `ERROR` |
 
-RabbitMQ y Redis todavía no forman parte del módulo, por lo que figuran como `NOT_CONFIGURED` y no degradan el estado. La bandeja de salida de eventos (`outbox`) es `null` hasta que exista. El detalle de los errores nunca expone credenciales ni cadenas de conexión; el mensaje real queda solo en el log del servidor.
+* **`rabbitmq`:** `OK` o `ERROR`. Sin `RABBITMQ_URL` figura como `NOT_CONFIGURED`; los eventos se siguen guardando, así que el estado pasa a `DEGRADED` cuando alguno espera más de 60 s.
+* **`outbox`:** cantidad de eventos pendientes (`pending`) y segundos que lleva esperando el más viejo (`oldestPendingSeconds`). Es `null` si no se pudo consultar, por ejemplo con la base caída.
+* **`redis`:** todavía no forma parte del módulo y figura como `NOT_CONFIGURED`.
+
+La respuesta nunca expone credenciales ni cadenas de conexión; el detalle de cada falla queda en el log del servidor.
 
 ### Telemetría para OpsBoard
 
@@ -232,7 +254,31 @@ El colector local de OpsBoard recibe los logs por OTLP. Si el entorno también c
 Las peticiones HTTP y las consultas Prisma aparecen como spans; el span `prisma:engine:db_query` alimenta además `db_client_operation_duration_seconds`, la serie consultada por el panel de latencia PostgreSQL p95. Los logs HTTP son JSON e incluyen `trace_id`, `span_id` y `idCorrelacion` cuando están disponibles. El log registra ruta normalizada, método y estado; no incluye cuerpos, tokens, coordenadas ni SQL. Las trazas HTTP entrantes exportan la ruta normalizada y omiten los parámetros de consulta. Los indicadores de CPU, memoria, runtime y HTTP se exportan con las instrumentaciones de OpenTelemetry.
 
 ### Salidas Asíncronas (Catálogo de Eventos de Dominio - RNF-03)
-*(En próximas iteraciones se publicarán mediante RabbitMQ según RNF-10. Hoy se publican en el bus en memoria de `event-publisher.service.ts`, que conserva los últimos 100 y los expone en el panel de demo. Convención propuesta en el contrato: exchange `m6.events` de tipo `topic` y routing keys `trip.created`, `trip.arrived`, `trip.started`, `trip.completed` y `trip.cancelled`.)*
+
+M6 publica sus eventos en RabbitMQ (RNF-10), en el exchange `m6.events` de tipo `topic`:
+
+| Evento | Routing key |
+| :--- | :--- |
+| `TripCreated` | `trip.created` |
+| `DriverArrived` | `trip.arrived` |
+| `TripStarted` | `trip.started` |
+| `TripCompleted` | `trip.completed` |
+| `TripCancelled` | `trip.cancelled` |
+
+Las routing keys siguen la convención del contrato y están **pendientes de acordar con el Grupo 5**; se definen en `backend/src/config/messaging.ts`.
+
+#### Cómo se envían (patrón outbox)
+
+1. El evento se guarda en la tabla `outbox_events` en la **misma transacción** que el cambio del viaje: si el viaje se guarda, el evento también.
+2. Un despachador revisa la tabla cada 2 s y envía los pendientes en orden (hasta 50 por pasada), esperando la confirmación del broker. Recién entonces los marca como enviados.
+3. Si un envío falla, se detiene y reintenta en la pasada siguiente, para no adelantar un evento posterior.
+
+* **Entrega "al menos una vez":** un evento puede llegar repetido.
+* **Una sola instancia:** el despachador supone que corre un único M6.
+* **Sin `RABBITMQ_URL`:** los eventos quedan pendientes y salen cuando se configure un broker.
+* **Cada consumidor crea su cola** y la asocia al exchange (por ejemplo, con `trip.#`). El broker descarta los mensajes que no tienen ninguna cola que los reciba, y M6 los da por enviados: **no conectar M6 a un broker compartido hasta que esas colas existan**.
+
+Para ver los eventos en desarrollo, desde `backend`: `npm run eventos:escuchar` (se corta con Ctrl+C).
 
 Los eventos se nombran **en pasado** y describen algo que ya ocurrió. Llevan datos suficientes para que quien los reciba **no tenga que volver a preguntar** (RNF-03). Los esquemas completos están en `openapi.yaml` → `components/schemas`.
 
@@ -340,6 +386,10 @@ Hay **un único evento de cancelación**. Quién canceló (`cancelledBy`), el mo
 | Duración exacta en segundos (`closure.durationSeconds`) y en minutos solo para mostrar. | Un único valor para tarifar evita que dos consumidores redondeen distinto (RF-6.5 / RF-7.1). |
 | Atajos de demo detrás de `ENABLE_DEMO_AUTH` y errores sin detalles internos. | Facilitan el desarrollo sin dejar un camino de entrada sin token en un entorno publicado (RNF-12 / RNF-19). |
 | `/health` es liveness puro y `/health/details` hace el diagnóstico. | Si la base se cae momentáneamente, Docker no reinicia el proceso, y el diagnóstico completo queda en un endpoint aparte (RNF-14). |
+| Patrón outbox: el evento se guarda en la misma transacción que el viaje. | No se pierden eventos si RabbitMQ está caído o el servidor se reinicia antes de enviarlos (RNF-10). |
+| Se guarda en la outbox aunque no haya `RABBITMQ_URL`. | Un único comportamiento en todos los entornos; los pendientes salen al configurar el broker. |
+| Entrega "al menos una vez". | Ante la duda se reenvía: un evento repetido se descarta por `eventId`, uno perdido no se recupera (RNF-09). |
+| RabbitMQ propio en `docker compose`, con URL configurable. | Se puede desarrollar sin depender de un broker compartido y cambiar de broker sin tocar código (RNF-04 / RNF-06). |
 
 ### Pendientes conocidos (deuda técnica)
 
@@ -349,8 +399,13 @@ Hay **un único evento de cancelación**. Quién canceló (`cancelledBy`), el mo
 | Permisos por módulo | Cualquier rol `*-be` se trata como `SYSTEM`; falta restringir por operación (por ejemplo, solo `solicitud-be` de M5 crea viajes) | Endurecer la autorización por operación (RF-1.4) |
 | Realm no compartido con la cátedra | El `docker-compose.yml` levanta un Keycloak propio en `localhost:8081` con un realm derivado (roles y usuarios de desarrollo), porque el de la cátedra no tiene roles de usuario | Si la cátedra o M1 publican esos roles en el realm compartido, migrar y apuntar `AUTH_ISSUER` / `AUTH_JWKS_URI` a esa instancia (RNF-04 / RNF-18) |
 | Validación del QR contra M8 | `M8QrValidatorService` implementa la llamada HTTP oficial a M8 (`POST /api/v1/documents/qr/verify`) con quemado atómico garantizado por M8 (Redis con TTL y 410 Gone). En modo local/desarrollo sin M8, la simulación usa un cache en memoria | En modo local sin M8, los tokens consumidos en memoria se pierden al reiniciar; en producción, M8 es la fuente de verdad. Queda a coordinar con M8 (Grupo 10) si `/documents/qr/verify` es idempotente ante reintentos por timeout para el mismo `(tripId, token)` (RF-6.4 / RNF-09 / RNF-13) |
-| Bus de eventos | En memoria (`event-publisher.service.ts`), guarda los últimos 100 | Se pierde al reiniciar el servidor; queda para la iteración con RabbitMQ (RNF-10) |
-| RabbitMQ, Redis y outbox | No están integrados: `/health/details` los informa como `NOT_CONFIGURED` y `outbox` como `null` | Hasta entonces no hay entrega garantizada de eventos ni estado compartido entre instancias |
+| Acuerdo de mensajería con el Grupo 5 | Exchange, routing keys, formato y broker compartido siguen la convención del contrato, sin acuerdo cerrado | Puede haber que cambiar `backend/src/config/messaging.ts` (RNF-10) |
+| Colas de los consumidores | M6 no crea las colas; un evento sin cola que lo reciba se descarta y queda marcado como enviado | No conectar a un broker compartido hasta que las colas existan |
+| Una sola instancia | El despachador no reparte los pendientes entre procesos | Con varias instancias habría envíos repetidos |
+| Evento que falla siempre | El despachador se detiene en el primer fallo para respetar el orden | Frena los eventos posteriores hasta resolverlo; se detecta con `DEGRADED` en `/health/details` |
+| Limpieza de la outbox | Los eventos enviados no se borran | La tabla crece con el tiempo |
+| Historial en memoria | El panel de demo muestra los últimos 100 eventos desde `event-publisher.service.ts` | Se vacía al reiniciar; la copia durable está en `outbox_events` |
+| Redis | No está integrado y figura como `NOT_CONFIGURED` | No hay estado compartido entre instancias |
 | Límite de pedidos | Se cuenta en memoria dentro de cada proceso | Con varias instancias del servicio cada una cuenta por separado; con Redis sería compartido (RNF-12) |
 | Panel de demo (`/api/*`) | Los endpoints del panel (`seed`, `trips`, `transition`) no usan autenticación | Son solo para desarrollo; no deben exponerse en un entorno publicado |
 | Caída real de PostgreSQL sin test automático | El `503` de `/health/details` se prueba con una falla simulada (`spyOn` sobre la consulta a la base); ningún test apaga PostgreSQL de verdad | Se verifica a mano: `docker compose stop db` y `curl.exe -i http://localhost:3006/health/details` (debe dar `503`) |
@@ -362,9 +417,9 @@ Hay **un único evento de cancelación**. Quién canceló (`cancelledBy`), el mo
 ```text
 .
 ├── openapi.yaml              Contrato de las interfaces síncronas y catálogo de eventos (RNF-03)
-├── docker-compose.yml        Servicios db (PostgreSQL) y backend (RNF-04)
+├── docker-compose.yml        Servicios db, rabbitmq, keycloak y backend (RNF-04)
 ├── .dockerignore             Archivos que no entran a la imagen del backend
-├── .env.example              Variables para Docker Compose (PostgreSQL)
+├── .env.example              Variables para Docker Compose (PostgreSQL, Keycloak y RabbitMQ)
 ├── frontend/                 Panel de demo (index.html) y Swagger UI (swagger.html)
 └── backend/
     ├── Dockerfile            Imagen del backend (Node 22; aplica migraciones y arranca el servidor)
@@ -373,7 +428,7 @@ Hay **un único evento de cancelación**. Quién canceló (`cancelledBy`), el mo
     ├── vitest.config.ts      Configuración de `npm test` (solo tests unitarios)
     ├── vitest.integration.config.ts  Configuración de `npm run test:integration` (base de tests, archivos en serie)
     ├── prisma/
-    │   ├── schema.prisma     Modelos Trip, TripEventHistory e IdempotencyKey
+    │   ├── schema.prisma     Modelos Trip, TripEventHistory, IdempotencyKey y OutboxEvent
     │   └── migrations/       Historial de migraciones SQL versionadas
     ├── generated/prisma/     Cliente tipado de Prisma (se genera con `npx prisma generate`; no versionado)
     ├── src/
@@ -381,17 +436,17 @@ Hay **un único evento de cancelación**. Quién canceló (`cancelledBy`), el mo
     │   ├── config/           Conexión a la base y armado de dependencias
     │   ├── routes/           Enrutamiento de las rutas del contrato
     │   ├── controllers/      Validación de la entrada y formato de la respuesta HTTP
-    │   ├── services/         Lógica de negocio, eventos, idempotencia y health
+    │   ├── services/         Lógica de negocio, eventos, envío a RabbitMQ, idempotencia y health
     │   ├── repositories/     Acceso a PostgreSQL con Prisma
     │   ├── domain/           Máquina de estados y reglas de cancelación (lógica pura)
     │   ├── mappers/          Conversión de filas a los esquemas del contrato
     │   └── middlewares/      Autenticación, errores, precondiciones (If-Match) y límite de pedidos
     └── tests/
-      ├── *.test.ts         Tests unitarios (dominio, autenticación, cabeceras, idempotencia, eventos y health)
+      ├── *.test.ts         Tests unitarios (dominio, autenticación, cabeceras, idempotencia, eventos, outbox y health)
       └── integration/      Tests de integración: servidor real y PostgreSQL de pruebas
          ├── global-setup.ts  Crea y migra la base m6_trips_test una vez antes de los tests
          ├── helpers.ts       Arranque del servidor, limpieza de tablas, cliente HTTP y atajos de creación
-         └── *.test.ts        Health y autenticación, creación y consulta, ciclo de vida, cancelación, idempotencia, límite de cuerpo, límite de pedidos y falla de health
+         └── *.test.ts        Health y autenticación, creación y consulta, ciclo de vida, cancelación, idempotencia, límite de cuerpo, límite de pedidos y falla de health, outbox y RabbitMQ
 ```
 
 ---
@@ -404,7 +459,7 @@ Hay **un único evento de cancelación**. Quién canceló (`cancelledBy`), el mo
 
 ### Opción A: todo con Docker (sin instalar Node)
 
-Levanta PostgreSQL, Keycloak (identidad) y el backend en contenedores. Desde la raíz del repositorio:
+Levanta PostgreSQL, RabbitMQ, Keycloak (identidad) y el backend en contenedores. Desde la raíz del repositorio:
 
 1. Crear el archivo `.env` en la **raíz**, copiado de `.env.example`, con `POSTGRES_USER`, `POSTGRES_PASSWORD` y `POSTGRES_DB`. Las variables de Keycloak (`KEYCLOAK_*`) tienen valores de desarrollo en `compose`, así que se pueden omitir. El `backend/.env` **no hace falta** en Docker: Compose le pasa al contenedor las variables que necesita (`DATABASE_URL` apuntando al servicio `db`, `PORT`, `ENABLE_DEMO_AUTH` y las de autenticación `AUTH_ISSUER` / `AUTH_JWKS_URI`).
 2. Construir y levantar:
@@ -412,7 +467,7 @@ Levanta PostgreSQL, Keycloak (identidad) y el backend en contenedores. Desde la 
    docker compose up -d --build
    ```
    Al arrancar, el contenedor del backend aplica las migraciones pendientes (`prisma migrate deploy`) y luego inicia el servidor.
-3. Verificar: `http://localhost:3006/health/details` debe responder `status: OK`. El panel visual está en `http://localhost:3006` y Swagger en `http://localhost:3006/docs`. Keycloak queda en `http://localhost:8081` (consola de administración y emisor de tokens).
+3. Verificar: `http://localhost:3006/health/details` debe responder `status: OK`. El panel visual está en `http://localhost:3006` y Swagger en `http://localhost:3006/docs`. Keycloak queda en `http://localhost:8081` (consola de administración y emisor de tokens). El panel de RabbitMQ queda en `http://localhost:15672` (usuario `m6`, clave `m6_dev`; se cambian con `RABBITMQ_USER` y `RABBITMQ_PASSWORD` en el `.env` de la raíz).
 4. Pedir un token de prueba (usuario `conductor1`, contraseña `conductor1-contrasena-de-desarrollo`):
    ```powershell
    curl.exe -s http://localhost:8081/realms/ds-2026-realm/protocol/openid-connect/token `
@@ -423,7 +478,7 @@ Levanta PostgreSQL, Keycloak (identidad) y el backend en contenedores. Desde la 
 5. Detener:
    ```bash
    docker compose down        # conserva los datos de las dos bases
-   docker compose down -v     # borra también los datos (volúmenes m6_pgdata y m6_keycloak_pgdata)
+   docker compose down -v     # borra también los datos (volúmenes m6_pgdata, m6_keycloak_pgdata y m6_rabbitmq_data)
    ```
 
 Si después se quiere correr el backend localmente con `npm run dev` (Opción B), primero hay que liberar el puerto 3006: `docker compose stop backend`.
@@ -450,6 +505,7 @@ Si después se quiere correr el backend localmente con `npm run dev` (Opción B)
    DATABASE_URL="postgresql://m6user:cambiar_esta_clave@localhost:5433/m6_trips?schema=public"
    CLIENT_NO_SHOW_MINUTES=5
    ENABLE_DEMO_AUTH=true
+   RABBITMQ_URL=amqp://m6:m6_dev@localhost:5672
    ```
 
    Variables opcionales del servidor:
@@ -458,6 +514,8 @@ Si después se quiere correr el backend localmente con `npm run dev` (Opción B)
    | :--- | :--- | :--- |
    | `DATABASE_URL` | (obligatoria) | Conexión a PostgreSQL. |
    | `PORT` | `3006` | Puerto del servidor (RNF-06). |
+   | `RABBITMQ_URL` | desactivada | Dirección del broker (RNF-10). Sin ella los eventos quedan pendientes en la outbox. |
+   | `RABBITMQ_EXCHANGE` | `m6.events` | Exchange donde se publican los eventos. |
    | `CLIENT_NO_SHOW_MINUTES` | `5` | Minutos desde el arribo para aceptar `CLIENT_NO_SHOW`. |
    | `M8_API_URL` | desactivada | URL base del módulo M8 para validación de QR (RF-6.4). Si no se indica, usa simulación en memoria. |
    | `M8_TIMEOUT_MS` | `3000` | Timeout en milisegundos para la llamada de validación contra M8 (RNF-13). |
@@ -476,9 +534,9 @@ Si después se quiere correr el backend localmente con `npm run dev` (Opción B)
    | `AUTH_CLOCK_TOLERANCE_SEC` | `5` | Tolerancia de reloj al validar `exp` / `nbf` / `iat`. |
    | `APP_VERSION` | versión de `package.json` | Versión que informa `/health/details`. |
 
-3. **Levantar la base de datos PostgreSQL con Docker (RNF-04), desde la raíz del repositorio:**
+3. **Levantar PostgreSQL y RabbitMQ con Docker (RNF-04), desde la raíz del repositorio:**
    ```bash
-   docker compose up -d db
+   docker compose up -d db rabbitmq
    ```
 
 4. **Generar el cliente de Prisma y aplicar las migraciones, desde `backend`:**
@@ -500,11 +558,12 @@ Si después se quiere correr el backend localmente con `npm run dev` (Opción B)
 6. **Ejecutar los tests, desde `backend`:**
    ```bash
    npm test                    # tests unitarios: no necesitan Docker ni base de datos
-   npm run test:integration    # tests de integración: necesitan PostgreSQL levantado (docker compose up -d db)
+   npm run test:integration    # tests de integración: necesitan PostgreSQL y RabbitMQ (docker compose up -d db rabbitmq)
    ```
    Los tests de integración levantan el servidor real en un puerto libre y lo ejercitan por HTTP contra una base **separada** llamada `m6_trips_test`, dentro del mismo PostgreSQL de Docker:
    * La base de tests se **crea y migra sola** la primera vez (no hace falta ningún paso manual), y se vacía antes de cada test.
    * **No tocan la base de desarrollo** (`m6_trips`): el nombre de la base de tests se calcula a partir de `DATABASE_URL` agregando el sufijo `_test`, y si no termina en `_test` los tests se detienen antes de borrar nada. Se puede indicar otra base con la variable `TEST_DATABASE_URL`.
+   * Los de RabbitMQ usan el broker local (`TEST_RABBITMQ_URL`, por defecto `amqp://m6:m6_dev@localhost:5672`) y un exchange aparte, `m6.events.test`. **Nunca usan `RABBITMQ_URL`**, así no envían eventos de prueba a un broker compartido.
    * No chocan con el servidor de desarrollo ni con el contenedor del backend, porque usan su propio puerto.
    * Cubren la creación idempotente de viajes, el ciclo `arrived`, `start` y `complete` (con `closure` y `durationSeconds`), la cancelación por rol y sus motivos, las precondiciones (`ETag`, `If-Match`, `If-None-Match`), `Idempotency-Key`, los límites de tamaño del cuerpo (`413`) y de pedidos (`429`), la autenticación, los permisos de lectura y `/health/details` (incluido el `503` cuando PostgreSQL falla, simulado en el test).
 
@@ -515,9 +574,28 @@ Si después se quiere correr el backend localmente con `npm run dev` (Opción B)
    npx prisma studio
    ```
 
+### Antes de conectar a un broker compartido
+
+La base de desarrollo puede tener eventos de prueba pendientes, que se enviarían apenas se configure el broker. Para evitarlo, primero confirmar que los consumidores ya crearon sus colas y después, desde la raíz del repositorio:
+
+> ⚠️ El paso 2 **borra todos los viajes**. Es solo para la base de desarrollo: **nunca en la base real**.
+
+1. Detener el backend: Ctrl+C donde corre `npm run dev`, o `docker compose stop backend`. Dejar `db` encendida.
+2. Vaciar las tablas (ajustar usuario y base si se cambiaron en `.env`):
+   ```powershell
+   docker compose exec db psql -U m6user -d m6_trips -c "TRUNCATE trips, idempotency_keys, outbox_events CASCADE;"
+   ```
+3. Comprobar que no quedó ningún evento (debe dar `0`):
+   ```powershell
+   docker compose exec db psql -U m6user -d m6_trips -c "SELECT count(*) FROM outbox_events;"
+   ```
+4. Recién ahora, cambiar `RABBITMQ_URL` (en `backend/.env` para `npm run dev`; en el `.env` de la raíz para Docker) y volver a levantar el backend (`npm run dev` o `docker compose up -d backend`).
+
+Mientras M6 esté conectado al broker compartido, todo viaje de prueba que se cree también se envía.
+
 ### Cómo correr los tests de cada requisito
 
-Cada requisito funcional tiene su propio test, con el nombre `rf-6.x-...`. Todos los comandos se corren **desde `backend`**. Los unitarios no necesitan Docker; los de integración necesitan PostgreSQL levantado (`docker compose up -d db`, desde la raíz del repo).
+Cada requisito funcional tiene su propio test, con el nombre `rf-6.x-...`. Todos los comandos se corren **desde `backend`**. Los unitarios no necesitan Docker; los de integración necesitan PostgreSQL, y la suite completa además RabbitMQ (`docker compose up -d db rabbitmq`, desde la raíz del repo).
 
 | Requisito | Test unitario | Test de integración |
 | :--- | :--- | :--- |

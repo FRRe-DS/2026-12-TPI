@@ -71,10 +71,12 @@ describe("RF-6.3: Arribo del conductor (Unitario - TripService.markDriverArrived
     expect(resultado.version).toBe(2);
     expect(resultado.arrivedAt).toBeInstanceOf(Date);
     expect(mockPublisher.publish).toHaveBeenCalledWith(
-      "DriverArrived",
-      tripId,
-      { clientId, driverId },
-      correlationId
+      expect.objectContaining({
+        eventType: "DriverArrived",
+        tripId,
+        payload: { clientId, driverId },
+        correlationId,
+      })
     );
   });
 

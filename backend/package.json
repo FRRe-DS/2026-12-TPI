@@ -8,6 +8,7 @@
     "start": "tsx src/main.ts",
     "ui": "tsx src/main.ts",
     "explorer": "prisma db push && prisma generate && tsx src/main.ts",
+    "eventos:escuchar": "tsx src/scripts/escuchar-eventos.ts",
     "test": "vitest run",
     "test:integration": "vitest run --config vitest.integration.config.ts"
   },
@@ -38,7 +39,8 @@
     "@opentelemetry/sdk-node": "0.301.2",
     "@opentelemetry/sdk-trace": "3.1.1",
     "@prisma/client": "^6.19.3",
-    "@prisma/instrumentation": "6.19.3"
+    "@prisma/instrumentation": "6.19.3",
+    "amqplib": "^2.4.2"
   },
   "devDependencies": {
     "@types/node": "^26.6.5",

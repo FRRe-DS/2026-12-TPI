@@ -1,7 +1,10 @@
-import { PrismaClient, TripState, ActorRole, VehicleType, CancellationReason, TripAction } from "../../generated/prisma/client.js";
+import { PrismaClient, Prisma, TripState, ActorRole, VehicleType, CancellationReason, TripAction } from "../../generated/prisma/client.js";
 import { recordTransition } from "../telemetria/metricas.js";
+import type { AnyDomainEvent } from "../services/event-publisher.service.js";
 
 export interface CreateTripRepoInput {
+  /** Id del viaje; si no viene, lo genera la base. */
+  id?: string;
   requestId: string;
   clientId: string;
   driverId: string;
@@ -46,6 +49,8 @@ export interface TransitionTripRepoInput {
   cancelledFromState?: TripState;
   requiresRedispatch?: boolean;
   metadata?: Record<string, unknown>;
+  /** Evento a publicar por esta transición; se guarda en la misma transacción. */
+  domainEvent: AnyDomainEvent;
 }
 
 /**
@@ -54,6 +59,22 @@ export interface TransitionTripRepoInput {
  */
 export class TripRepository {
   constructor(private readonly db: PrismaClient) {}
+
+  /**
+   * Patrón outbox (RNF-10): guarda el evento como pendiente dentro de la misma transacción que el viaje,
+   * así se confirman los dos o ninguno. Se guarda siempre, esté o no configurado RabbitMQ: si todavía no se
+   * puede enviar, queda pendiente y no se pierde.
+   */
+  private async saveToOutbox(tx: Prisma.TransactionClient, event: AnyDomainEvent) {
+    await tx.outboxEvent.create({
+      data: {
+        eventId: event.eventId,
+        eventType: event.eventType,
+        tripId: event.tripId,
+        envelope: event as unknown as Prisma.InputJsonValue,
+      },
+    });
+  }
 
   async checkDatabaseHealth(): Promise<boolean> {
     await this.db.$queryRaw`SELECT 1`;
@@ -69,12 +90,18 @@ export class TripRepository {
   }
 
   /**
-   * Crea el viaje en `trips` y su primer registro en `trip_event_history` en una única transacción ACID.
+   * Crea el viaje en `trips`, su primer registro en `trip_event_history` y el evento pendiente en la
+   * outbox, en una única transacción ACID.
    */
-  async createTripWithInitialEvent(input: CreateTripRepoInput, actorId: string) {
+  async createTripWithInitialEvent(
+    input: CreateTripRepoInput,
+    actorId: string,
+    domainEvent: AnyDomainEvent
+  ) {
     const created = await this.db.$transaction(async (tx) => {
       const trip = await tx.trip.create({
         data: {
+          id: input.id,
           requestId: input.requestId,
           clientId: input.clientId,
           driverId: input.driverId,
@@ -102,6 +129,8 @@ export class TripRepository {
           metadata: { source: "M5_DISPATCH", requestId: input.requestId },
         },
       });
+
+      await this.saveToOutbox(tx, domainEvent);
 
       return trip;
     });
@@ -226,6 +255,8 @@ export class TripRepository {
         },
       });
 
+      await this.saveToOutbox(tx, input.domainEvent);
+      
       return updated;
     });
     if (updated) {
